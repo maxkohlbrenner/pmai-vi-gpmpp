@@ -1,0 +1,62 @@
+Project Presentation Overview:
+-----------------------------
+
+1. Introduction:
+	- poisson point process examples + expl
+		-> malaria examples
+	- explain (/semi-derive) formula (1)
+	- illustrate importance of the rate function
+		-> different rate function sample plots
+
+2. Problem:
+	- explain our setting: learn the intensity function with bayesian inference
+	- problem: doubly intractable integral (3)
+	- present different solution ideas? 
+		-> MCMC approach, problems with it
+	- paper approach:
+		-> sparse GP prior
+		-> variational inference
+
+3. Background:
+	- General Ideas behind the 
+	- Sparse GP
+		-> (why? explain difference, problem with integration)
+	- Variational inference 
+		-> derive general bound? 
+		-> explain why the optimized dist approximates the posterior
+
+4. Modell:
+	- lambda(x) = f(x)**2
+	- inducing points U, prior f|u ~GP
+	- location fix (grid), one could also optimize
+	- show kernel (only state it)
+	- show model formula (8)
+	- show parameters (\Omega) (only state which parts contain parameters?)
+
+5. Lower Bound:
+	- introduce variational distribution(model depends only on p(u))
+	- derive variational lower bound
+	- explain why this approximates the posterior
+
+	- idea: max L => get q(u) => calc q(f) 
+		-> then it would be possible to sample an f, square it and get a rate function
+
+	- decompose the formula, show depencencies and give intuitions why certain parts are tractable
+	- describe problem with the high res lookup table
+		-> what does this mean for the TF implementation
+
+6. Evaluation:
+	- show loglikelihood plots
+	- what do we want to reproduce (goal)
+	- show kenya plot, hoping to reproduce sth similar
+
+7. Concolusion + Discussion
+
+----------------------------------------------------------------------------------------------------------
+Todo:
+	- finish smapling plot and include it somewhere (thinning with real model)
+
+Questions:
+	- why exactly helps the sparse formulation in the integration?
+		-> take a look at general gaussian prior + posterior
+	- VI: best solution for model class?
