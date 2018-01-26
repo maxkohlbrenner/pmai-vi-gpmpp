@@ -54,13 +54,17 @@ def build_graph(num_inducing_points = 11):
 
     with tf.name_scope('KL-divergence'):
         kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph)
-        tf.summary.scalar('kl_div', kl_term_op)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term - kl_term_op
 
-    m_grad = tf.gradients(kl_term_op, [m])[0]  
-    L_vech_grad = tf.gradients(kl_term_op, [L_vech])[0]
+    tf.summary.scalar('variational_lower_bound',    tf.squeeze(lower_bound)    )
+    tf.summary.scalar('integral_over_T',            tf.squeeze(integral_over_T))
+    tf.summary.scalar('exp_term',                   tf.squeeze(exp_term)       )
+    tf.summary.scalar('kl_div',                     kl_term_op     )
+
+    # m_grad = tf.gradients(kl_term_op, [m])[0]  
+    # L_vech_grad = tf.gradients(kl_term_op, [L_vech])[0]
 
 
     merged = tf.summary.merge_all()
