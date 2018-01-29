@@ -26,19 +26,24 @@ def build_graph(num_inducing_points = 11):
     ## ####### ##
     # VARIABLES # 
     ## ####### ##
-    # mean
-    m_init = tf.ones([num_inducing_points])
-    m = tf.Variable(m_init)
 
-    # vectorized version of covariance matrix S (ensure valid covariance matrix)
-    vech_size   = (num_inducing_points * (num_inducing_points+1)) / 2 
-    vech_indices= tf.transpose(tf_tril_indices(num_inducing_points))
-    L_vech_init = tf.ones([vech_size])
-    L_vech = tf.Variable(L_vech_init)
-    L_shape = tf.constant([num_inducing_points, num_inducing_points])
-    L_st = tf.SparseTensor(tf.to_int64(vech_indices), L_vech, tf.to_int64(L_shape))
-    L = tf.sparse_add(tf.zeros(L_shape), L_st)
-    S = tf.matmul(L, tf.transpose(L))
+    with tf.name_scope('variational_distribution_parameters'):
+        # mean
+        m_init = tf.ones([num_inducing_points])
+        m = tf.Variable(m_init, name='variational_mean')
+
+        # vectorized version of covariance matrix S (ensure valid covariance matrix)
+        vech_size   = tf.cast( (num_inducing_points * (num_inducing_points+1)) / 2, tf.int32)
+        vech_indices= tf.transpose(tf_tril_indices(num_inducing_points))
+        
+        # L_vech_init = tf.ones([vech_size]) 
+        L_vech_init = tf.random_normal([vech_size], stddev=0.35)
+
+        L_vech = tf.Variable(L_vech_init)
+        L_shape = tf.constant([num_inducing_points, num_inducing_points])
+        L_st = tf.SparseTensor(tf.to_int64(vech_indices), L_vech, tf.to_int64(L_shape))
+        L = tf.sparse_add(tf.zeros(L_shape), L_st)
+        S = tf.matmul(L, tf.transpose(L), name='variational_covariance')
 
     # kernel calls
     K_zz  = ard_kernel(Z_ph, Z_ph, alphas=a_const)
@@ -53,23 +58,25 @@ def build_graph(num_inducing_points = 11):
         exp_term = exp_at_datapoints(mu_t_sqr,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
-        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph)
+        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term - kl_term_op
 
-    tf.summary.scalar('variational_lower_bound',    tf.squeeze(lower_bound)    )
-    tf.summary.scalar('integral_over_T',            tf.squeeze(integral_over_T))
-    tf.summary.scalar('exp_term',                   tf.squeeze(exp_term)       )
-    tf.summary.scalar('kl_div',                     kl_term_op     )
+    tf.summary.scalar('variational_lower_bound',    tf.squeeze(lower_bound)     )
+    tf.summary.scalar('integral_over_T',            tf.squeeze(integral_over_T) )
+    tf.summary.scalar('exp_term',                   tf.squeeze(exp_term)        )
+    tf.summary.scalar('kl_div',                     kl_term_op                  )
 
     # m_grad = tf.gradients(kl_term_op, [m])[0]  
     # L_vech_grad = tf.gradients(kl_term_op, [L_vech])[0]
 
+    interesting_gradient = tf.gradients(lower_bound, [exp_term])[0]
+
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S, interesting_gradient
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -93,15 +100,25 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a_const):
 
     return mu_sqr,sig_sqr
 
-def kl_term(m, S, K_zz, K_zz_inv, u_ovln):
+def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     # mean_diff = (u_ovln * tf.ones([tf.shape(Z_ph)[0]]) - m)
     mean_diff = tf.expand_dims(u_ovln * tf.ones([tf.shape(m)[0]]) - m, 1)
-    first  = tf.trace(tf.matmul(K_zz_inv, S))
-    second = tf.log(tf.matrix_determinant(K_zz) / tf.matrix_determinant(S))
-    third  = tf.to_float(tf.shape(m)[0])
+    first  = tf.trace(tf.matmul(K_zz_inv, S), name='kl_first')
+
+    #kzz_det = tf.matrix_determinant(K_zz) 
+    #S_det   = tf.matrix_determinant(S)
+    #second = tf.log(kzz_det / S_det, name='kl_second')
+
+    K_zz_logdet = tf.linalg.logdet(K_zz)
+    # S_logdet =  tf.linalg.logdet(S)
+    S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)));
+
+    second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
+
+    third  = tf.to_float(tf.shape(m)[0], name='kl_third')
     # fourth = tf.reduce_sum(tf.multiply(tf.reduce_sum(tf.multiply(mean_diff, tf.transpose(K_zz_inv)), axis=1) , mean_diff))
     
-    fourth = tf.squeeze(tf.matmul(tf.matmul(tf.transpose(mean_diff), K_zz_inv), mean_diff))
+    fourth = tf.squeeze(tf.matmul(tf.matmul(tf.transpose(mean_diff), K_zz_inv), mean_diff), name='kl_fourth')
     
     return 0.5 * (first  + second - third + fourth)
 
