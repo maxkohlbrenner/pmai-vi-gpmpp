@@ -193,8 +193,7 @@ def load_lookup_table(file = 'g_lookup_table.npy'):
 def table_lookup_op_parallel(table, keys):
     '''
     Return a tensorflow op that approximates a function by linear interpolation from a precomputed lookup table
-
-    TODO: handle edge cases
+    Remark: this one handles edge cases correctly
     '''
     
     table_keys = table[0]
@@ -209,18 +208,26 @@ def table_lookup_op_parallel(table, keys):
     
     # difference from closest table_key to given key
     shift     = keys - top_keys
+
+    # out of bounds switch on the left
+    table_min_key = table_keys[0]
+    oob_l_switch  = tf.sign(tf.sign( keys - table_min_key) - 0.5)
+    # out of bounds switch on the right
+    table_max_key = table_keys[tf.shape(table)[1] - 1]
+    oob_r_switch  = -1 * tf.sign(tf.sign( keys - table_max_key ) - 0.5)
     
-    # -1 if table_ind == 0, 1 if table_ind > 0 (table ind always >= 0)
-    ti_zero_indicator = - tf.sign( tf.cast(tf.subtract(tf.ones([num_keys], dtype=tf.int32), tf.sign(table_ind)), dtype=tf.float32) - tf.constant(.5))
+    # real shift or shift to the smaller key if shift == 0
+    nonzero_shift = (tf.sign(tf.abs(shift)) - 1)  + shift
+    # shift to the right if table_ind is 0
+    # adapted_shift = nonzero_shift * (-1 * ti_zero_indicator) 
+    adapted_shift = nonzero_shift * oob_l_switch
+    # shift to the left if key > max_key
+    adapted_shift = adapted_shift * oob_r_switch
     
-    # shift to next table entry (used for gradient computation)
-    # if table_key == key:
-    # if key != 0 : next smaller table_key is used
-    # if key == 0 : next greater table_key is used
-    nonzero_shift = (1 - tf.sign(tf.abs(shift))) * (-1. * ti_zero_indicator) + shift
+    # either -1 or 1, direction to the second table entry used for gradient calculation
+    next_entry_shift = tf.cast(tf.sign(adapted_shift), tf.int32) 
     
-    shift_step        = tf.cast(tf.sign(nonzero_shift), tf.int32) 
-    table_ind_shifted = table_ind + shift_step
+    table_ind_shifted = table_ind + next_entry_shift
     
     table_val      = tf.gather(table_vals, table_ind)
     next_table_val = tf.gather(table_vals, table_ind_shifted)
@@ -235,7 +242,6 @@ def table_lookup_op_parallel(table, keys):
     interpolated_fun_value = table_val + shift * gradient
     
     return tf.stop_gradient(gradient) * keys + tf.stop_gradient(interpolated_fun_value - gradient * keys)
-
 
 def get_scp_samples(rate_function, region_lims, upper_bound):
     
