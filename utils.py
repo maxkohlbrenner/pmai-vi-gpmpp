@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import math
 
-def build_eval_graph(num_inducing_points = 11):
+def build_eval_graph():
     X_eval_ph = tf.placeholder(tf.float32, [None, None],  name='evaluation_points')
     Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
     
