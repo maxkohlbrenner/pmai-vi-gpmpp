@@ -2,6 +2,25 @@ import tensorflow as tf
 import numpy as np
 import math
 
+def build_eval_graph(num_inducing_points = 11):
+    X_eval_ph = tf.placeholder(tf.float32, [None, None],  name='evaluation_points')
+    Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
+    
+    K_zz_inv_ph = tf.placeholder(tf.float32, [None, None], name='Kzz_inverse')
+    
+    S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
+    m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
+    
+    a_const = tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
+    
+    with tf.name_scope('evaluation'):
+        mu_t_eval, sig_t_sqr_eval = mu_tilde_square(X_eval_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_const)
+        lam = mu_t_eval**2
+        lam_var = sig_t_sqr_eval #TODO: lam_var = sig_t_sqr_eval**2 ???
+
+    return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph 
+
+
 def build_graph(num_inducing_points = 11):
 
     ## ######### ##
@@ -9,7 +28,7 @@ def build_graph(num_inducing_points = 11):
     ## ######### ##
     Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
     u_ph = tf.placeholder(tf.float32, [],           name='inducing_point_mean')
-    X_ph =tf.placeholder(tf.float32, [None, None],  name='input_data')
+    X_ph = tf.placeholder(tf.float32, [None, None],  name='input_data')
 
     # TODO: set constants as variables and create two optimizers with var_lists to optimize with/without hyperparams
     a_const = tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
@@ -54,8 +73,8 @@ def build_graph(num_inducing_points = 11):
         integral_over_T = T_Integral(m,S,K_zz_inv,psi_matrix,g_const,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints'):
-        mu_t_sqr, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, a_const)
-        exp_term = exp_at_datapoints(mu_t_sqr,sig_t_sqr,C)
+        mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, a_const)
+        exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
         kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
@@ -73,10 +92,9 @@ def build_graph(num_inducing_points = 11):
 
     interesting_gradient = tf.gradients(lower_bound, [exp_term])[0]
 
-
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S, interesting_gradient
+    return lower_bound, merged, Z_ph, u_ph, X_ph,  m, S, interesting_gradient,K_zz_inv
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -93,12 +111,12 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a_const):
     k_zx = ard_kernel( Z,X_data, alphas=a_const)
     k_xz = tf.transpose(k_zx)
     K_xx = ard_kernel(X_data, X_data, alphas=a_const)
-    mu_sqr = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv)
-                                                     ,k_zx)**2
+    mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv)
+                                                     ,k_zx)
  
     sig_sqr = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
 
-    return mu_sqr,sig_sqr
+    return mu,sig_sqr
 
 def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     # mean_diff = (u_ovln * tf.ones([tf.shape(Z_ph)[0]]) - m)
