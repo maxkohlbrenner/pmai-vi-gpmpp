@@ -31,7 +31,7 @@ def build_graph(num_inducing_points = 11):
     X_ph = tf.placeholder(tf.float32, [None, None],  name='input_data')
 
     # TODO: set constants as variables and create two optimizers with var_lists to optimize with/without hyperparams
-    a_const = tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
+    a_const = 1 * tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
     g_const = tf.ones([1]) # later we have to define gamma as variable
     C = tf.constant(0.57721566)
 
@@ -62,7 +62,8 @@ def build_graph(num_inducing_points = 11):
         L_shape = tf.constant([num_inducing_points, num_inducing_points])
         L_st = tf.SparseTensor(tf.to_int64(vech_indices), L_vech, tf.to_int64(L_shape))
         L = tf.sparse_add(tf.zeros(L_shape), L_st)
-        S = tf.matmul(L, tf.transpose(L), name='variational_covariance')
+        # L = tf.sparse_add(tf.eye(L_shape[0], num_columns=L_shape[1]), L_st)
+        S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
 
     # kernel calls
     K_zz  = ard_kernel(Z_ph, Z_ph, alphas=a_const)
@@ -123,15 +124,37 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     mean_diff = tf.expand_dims(u_ovln * tf.ones([tf.shape(m)[0]]) - m, 1)
     first  = tf.trace(tf.matmul(K_zz_inv, S), name='kl_first')
 
-    #kzz_det = tf.matrix_determinant(K_zz) 
-    #S_det   = tf.matrix_determinant(S)
-    #second = tf.log(kzz_det / S_det, name='kl_second')
+    # #########################################
+    # TODO: solve matrix determinant Problem
+    # Approaches:
 
+    # 1. naive impl of determinants 
+    # -> Problem: NaN as Determimants get very large for big matrices
+    # Code:
+    # kzz_det = tf.matrix_determinant(K_zz) 
+    # S_det   = tf.matrix_determinant(S)
+    # second = tf.log(kzz_det / S_det, name='kl_second')
+
+    # 2. Logdet and Cholesky decomp
+    # -> Problem: Cholesky decomp not always possible (only pos semidefinite by our constr?)
+    # -> Adding Eye to S might be a possible solution
     K_zz_logdet = tf.linalg.logdet(K_zz)
-    # S_logdet =  tf.linalg.logdet(S)
-    S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)));
-
+    posdef_stabilizer = tf.eye(tf.shape(S)[0]) * 0.0001
+    S_logdet =  tf.linalg.logdet(S + posdef_stabilizer)
+    # S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)))
+    # posdef_stabilizer = tf.eye(L_shape[0]) * lambda
     second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
+
+    # 3. Using tf.slogdet
+    # -> Problem: slogdet doesn't seem to have a gradient defined
+    #kzz_lds, kzz_ldav = tf.linalg.slogdet(tf.expand_dims(K_zz, 0))
+    #K_zz_logdet = kzz_lds[0] * kzz_ldav[0]
+    #S_lds, S_ldav = tf.linalg.slogdet(tf.expand_dims(S, 0))
+    #S_logdet = S_lds[0] * S_ldav[0]
+    #second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
+    # #########################################
+
+    
 
     third  = tf.to_float(tf.shape(m)[0], name='kl_third')
     # fourth = tf.reduce_sum(tf.multiply(tf.reduce_sum(tf.multiply(mean_diff, tf.transpose(K_zz_inv)), axis=1) , mean_diff))
