@@ -11,17 +11,18 @@ def build_eval_graph():
     S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
     m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
     
-    a_const = tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
+    a_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
+    g_ph = tf.placeholder(tf.float32,None,name='final_gamma')
     
     with tf.name_scope('evaluation'):
-        mu_t_eval, sig_t_sqr_eval = mu_tilde_square(X_eval_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_const)
+        mu_t_eval, sig_t_sqr_eval = mu_tilde_square(X_eval_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
         lam = mu_t_eval**2
         lam_var = sig_t_sqr_eval #TODO: lam_var = sig_t_sqr_eval**2 ???
 
-    return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph 
+    return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, a_ph,g_ph
 
 
-def build_graph(num_inducing_points = 11):
+def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -29,10 +30,11 @@ def build_graph(num_inducing_points = 11):
     Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
     u_ph = tf.placeholder(tf.float32, [],           name='inducing_point_mean')
     X_ph = tf.placeholder(tf.float32, [None, None],  name='input_data')
+    #a_ph = tf.placeholder(tf.float32, [None] ,name='alphas')
 
     # TODO: set constants as variables and create two optimizers with var_lists to optimize with/without hyperparams
-    a_const = 1 * tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
-    g_const = tf.ones([1]) # later we have to define gamma as variable
+    #a_const = 1 * tf.ones([1]) # dimension = tf.shape(Z_ph)[1]
+    #g_const = tf.ones([1]) # later we have to define gamma as variable
     C = tf.constant(0.57721566)
 
     #Tlims
@@ -47,6 +49,14 @@ def build_graph(num_inducing_points = 11):
     ## ####### ##
 
     with tf.name_scope('variational_distribution_parameters'):
+        #alphas
+        a_init = tf.ones([dim])*a_init_val
+        a = tf.Variable(a_init, name = 'variational_alphas')
+        
+        #gamma
+        g_init = g_init_val
+        g = tf.Variable(g_init_val, name = 'variational_gamma')
+        
         # mean
         m_init = tf.ones([num_inducing_points])
         m = tf.Variable(m_init, name='variational_mean')
@@ -66,15 +76,15 @@ def build_graph(num_inducing_points = 11):
         S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
 
     # kernel calls
-    K_zz  = ard_kernel(Z_ph, Z_ph, alphas=a_const)
+    K_zz  = ard_kernel(Z_ph, Z_ph, alphas=a)
     K_zz_inv = tf.matrix_inverse(K_zz)
 
     with tf.name_scope('intergration-over-region-T'):
-        psi_matrix = psi_term(Z_ph,Z_ph,a_const,g_const,Tmins,Tmaxs)
-        integral_over_T = T_Integral(m,S,K_zz_inv,psi_matrix,g_const,Tmins,Tmaxs)
+        psi_matrix = psi_term(Z_ph,Z_ph,a,g,Tmins,Tmaxs)
+        integral_over_T = T_Integral(m,S,K_zz_inv,psi_matrix,g,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints'):
-        mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, a_const)
+        mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, a,g)
         exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
@@ -95,7 +105,7 @@ def build_graph(num_inducing_points = 11):
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph,  m, S, interesting_gradient,K_zz_inv
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv,a,g
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -108,10 +118,10 @@ def ard_kernel(X1, X2, gamma=1., alphas=None):
         return gamma * tf.reduce_prod(tf.exp(- (tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0))**2 / (2 * tf.expand_dims(tf.expand_dims(alphas, 0), 0))), axis=2) 
 
 
-def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a_const):
-    k_zx = ard_kernel( Z,X_data, alphas=a_const)
+def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
+    k_zx = ard_kernel( Z,X_data, gamma = g, alphas=a)
     k_xz = tf.transpose(k_zx)
-    K_xx = ard_kernel(X_data, X_data, alphas=a_const)
+    K_xx = ard_kernel(X_data, X_data, gamma = g, alphas=a)
     mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv)
                                                      ,k_zx)
  
