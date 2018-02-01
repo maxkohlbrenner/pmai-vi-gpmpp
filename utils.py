@@ -17,19 +17,20 @@ def get_test_log_likelihood():
     Tmins = tf.reduce_min(Z_ph, axis=0)
     Tmaxs = tf.reduce_max(Z_ph, axis=0)
     
-    with tf.name_scope('intergration-over-region-T (loglikelike testdata)':
+    C = tf.constant(0.57721566)
+    
+    with tf.name_scope('intergration-over-region-T (loglikelike testdata)'):
         psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_gh,Tmins,Tmaxs)
         integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints (loglikelike testdata)'):
-        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S,m,K_zz_inv, a,g)
+        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
         exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
-    with tf.name_scope('KL-divergence'):
-        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
-
     with tf.name_scope('calculate_bound'):
-        lower_bound = -integral_over_T + exp_term - kl_term_op
+        lower_bound = -integral_over_T + exp_term
+        
+    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph,K_zz_inv_ph,a_ph,g_ph
     
 
 def build_eval_graph():
