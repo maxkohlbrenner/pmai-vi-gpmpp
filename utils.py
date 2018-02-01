@@ -2,6 +2,36 @@ import tensorflow as tf
 import numpy as np
 import math
 
+def get_test_log_likelihood():
+    X_test_ph = tf.placeholder(tf.float32, [None, None],  name='evaluation_points')
+    Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
+    
+    K_zz_inv_ph = tf.placeholder(tf.float32, [None, None], name='Kzz_inverse')
+    
+    S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
+    m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
+    
+    a_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
+    g_ph = tf.placeholder(tf.float32,None,name='final_gamma')
+    
+    Tmins = tf.reduce_min(Z_ph, axis=0)
+    Tmaxs = tf.reduce_max(Z_ph, axis=0)
+    
+    with tf.name_scope('intergration-over-region-T (loglikelike testdata)':
+        psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_gh,Tmins,Tmaxs)
+        integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
+
+    with tf.name_scope('expectation_at_datapoints (loglikelike testdata)'):
+        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S,m,K_zz_inv, a,g)
+        exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
+
+    with tf.name_scope('KL-divergence'):
+        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
+
+    with tf.name_scope('calculate_bound'):
+        lower_bound = -integral_over_T + exp_term - kl_term_op
+    
+
 def build_eval_graph():
     X_eval_ph = tf.placeholder(tf.float32, [None, None],  name='evaluation_points')
     Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
@@ -54,8 +84,8 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
         a = tf.Variable(a_init, name = 'variational_alphas')
         
         #gamma
-        g_init = g_init_val
-        g = tf.Variable(g_init_val, name = 'variational_gamma')
+        g_base = tf.Variable(g_init_val, name = 'variational_gamma')
+        g = tf.abs(g_base)
         
         # mean
         m_init = tf.ones([num_inducing_points])
@@ -76,7 +106,7 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
         S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
 
     # kernel calls
-    K_zz  = ard_kernel(Z_ph, Z_ph, alphas=a)
+    K_zz  = ard_kernel(Z_ph, Z_ph, gamma=g, alphas=a)
     K_zz_inv = tf.matrix_inverse(K_zz)
 
     with tf.name_scope('intergration-over-region-T'):
@@ -105,7 +135,7 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv,a,g
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv,a,g_base,K_zz
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
