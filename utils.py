@@ -11,26 +11,26 @@ def get_test_log_likelihood():
     S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
     m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
     
-    a_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
-    g_ph = tf.placeholder(tf.float32,None,name='final_gamma')
+    alphas_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
+    gamma_ph = tf.placeholder(tf.float32,None,name='final_gamma')
     
     Tmins = tf.reduce_min(Z_ph, axis=0)
     Tmaxs = tf.reduce_max(Z_ph, axis=0)
     
     C = tf.constant(0.57721566)
     
-    with tf.name_scope('intergration-over-region-T (loglikelike testdata)'):
-        psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_gh,Tmins,Tmaxs)
-        integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
+    with tf.name_scope('integration-over-region-T (loglikelike testdata)'):
+        psi_matrix = psi_term(Z_ph,Z_ph,alpha_ph,g_gh,Tmins,Tmaxs)
+        integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,gamma_ph,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints (loglikelike testdata)'):
-        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
+        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alpha_ph,gamma_ph)
         exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term
         
-    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph,K_zz_inv_ph,a_ph,g_ph
+    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph,K_zz_inv_ph,alpha_ph,gamma_ph
     
 
 def build_eval_graph():
@@ -42,18 +42,18 @@ def build_eval_graph():
     S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
     m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
     
-    a_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
-    g_ph = tf.placeholder(tf.float32,None,name='final_gamma')
+    alpha_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
+    gamma_ph = tf.placeholder(tf.float32,None,name='final_gamma')
     
     with tf.name_scope('evaluation'):
-        mu_t_eval, sig_t_sqr_eval = mu_tilde_square(X_eval_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
+        mu_t_eval, sig_t_sqr_eval = mu_tilde_square(X_eval_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alpha_ph,gamma_ph)
         lam = mu_t_eval**2
         lam_var = sig_t_sqr_eval #TODO: lam_var = sig_t_sqr_eval**2 ???
 
-    return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, a_ph,g_ph
+    return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
+def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1.):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -81,12 +81,12 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
 
     with tf.name_scope('variational_distribution_parameters'):
         #alphas
-        a_init = tf.ones([dim])*a_init_val
-        a = tf.Variable(a_init, name = 'variational_alphas')
+        alphas_init = tf.ones([dim])*alphas_init_val
+        alphas = tf.Variable(alphas_init, name = 'variational_alphas')
         
         #gamma
-        g_base = tf.Variable(g_init_val, name = 'variational_gamma')
-        g = tf.abs(g_base)
+        gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
+        gamma = tf.abs(gamma_base)
         
         # mean
         m_init = tf.ones([num_inducing_points])
@@ -107,16 +107,25 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
         S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
 
     # kernel calls
-    K_zz  = ard_kernel(Z_ph, Z_ph, gamma=g, alphas=a)
+    K_zz  = ard_kernel(Z_ph, Z_ph, gamma=gamma, alphas=alphas)
     K_zz_inv = tf.matrix_inverse(K_zz)
 
-    with tf.name_scope('intergration-over-region-T'):
-        psi_matrix = psi_term(Z_ph,Z_ph,a,g,Tmins,Tmaxs)
-        integral_over_T = T_Integral(m,S,K_zz_inv,psi_matrix,g,Tmins,Tmaxs)
+    with tf.name_scope('integration-over-region-T'):
+        
+        with tf.name_scope('psi_matrix'):
+            psi_matrix = psi_term(Z_ph,Z_ph,alphas,gamma,Tmins,Tmaxs)
+
+        with tf.name_scope('T_integral'):
+            integral_over_T = T_Integral(m,S,K_zz_inv,psi_matrix,gamma,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints'):
-        mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, a,g)
-        exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
+        with tf.name_scope('mu_and_sig_calculation'):
+            mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, alphas, gamma)
+
+        with tf.name_scope('squaring_that_mu'):
+            mu_t_square = mu_t ** 2
+
+        exp_term = exp_at_datapoints(mu_t_square,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
         kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
@@ -136,7 +145,7 @@ def build_graph(num_inducing_points = 11,dim = 1,a_init_val=1, g_init_val=1.):
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv,a,g_base,K_zz
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv, alphas, gamma_base,K_zz
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -150,15 +159,47 @@ def ard_kernel(X1, X2, gamma=1., alphas=None):
 
 
 def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
-    k_zx = ard_kernel( Z,X_data, gamma = g, alphas=a)
-    k_xz = tf.transpose(k_zx)
-    K_xx = ard_kernel(X_data, X_data, gamma = g, alphas=a)
-    mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv)
-                                                     ,k_zx)
- 
-    sig_sqr = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
+    '''
+    N : num datapoints
+    D : datapoint dimensionality
+    M : number inducing points
 
-    return mu,sig_sqr
+    IN: 
+    ---
+    X_data   : (N, D)
+    Z        : (M, D)
+    S        : (M, M)
+    m        : (M)
+    K_zz_inv : (M, M)
+    a        : (D)
+    g        : ()
+
+    OUT:
+    ----
+    mu      : (N)
+    sig_sqr : (N)
+    '''
+
+    with tf.name_scope('K_ZX'):
+        # k_zx : (M, N)
+        k_zx = ard_kernel( Z,X_data, gamma = g, alphas=a)
+    with tf.name_scope('K_XZ'):
+        # k_xz : (N, M)
+        k_xz = tf.transpose(k_zx, name='K_XZ')
+    with tf.name_scope('K_XX'):
+        # k_xx : (N, N)
+        K_xx = ard_kernel(X_data, X_data, gamma = g, alphas=a)
+
+    # mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv),k_zx, name='mu')
+
+    # mu : (N, M)dot(M, M)dot(M) = (N)
+    mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') ) 
+
+    # sig_sqr : (N, N) - (N, M)dot(M,M)dot(M,N)
+    XX_cov = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
+
+    sig_sqr = tf.diag_part(XX_cov, name='sig_sqr')
+    return mu, sig_sqr
 
 def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     # mean_diff = (u_ovln * tf.ones([tf.shape(Z_ph)[0]]) - m)
@@ -179,12 +220,19 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     # 2. Logdet and Cholesky decomp
     # -> Problem: Cholesky decomp not always possible (only pos semidefinite by our constr?)
     # -> Adding Eye to S might be a possible solution
-    K_zz_logdet = tf.linalg.logdet(K_zz)
-    posdef_stabilizer = tf.eye(tf.shape(S)[0]) * 0.0001
-    S_logdet =  tf.linalg.logdet(S + posdef_stabilizer)
-    # S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)))
-    # posdef_stabilizer = tf.eye(L_shape[0]) * lambda
-    second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
+
+    with tf.name_scope('log_of_determinant_ratio'):
+
+        posdef_stabilizer = tf.eye(tf.shape(S)[0]) * 0.01
+
+        with tf.name_scope('K_zz_logdet'):
+            K_zz_logdet = tf.linalg.logdet(K_zz + posdef_stabilizer)
+
+        with tf.name_scope('S_logdet'):
+            S_logdet =  tf.linalg.logdet(S + posdef_stabilizer)
+        # S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)))
+        # posdef_stabilizer = tf.eye(L_shape[0]) * lambda
+        second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
 
     # 3. Using tf.slogdet
     # -> Problem: slogdet doesn't seem to have a gradient defined
@@ -205,7 +253,9 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     return 0.5 * (first  + second - third + fourth)
 
 def psi_term(Z1, Z2,a,g,Tmin,Tmax):
+
     z_ovln = (tf.expand_dims(Z1,1)+tf.expand_dims(Z2,0))/2
+
     a_r = tf.expand_dims(tf.expand_dims(a,0),1)
     
     pi = tf.constant(math.pi)
@@ -222,9 +272,8 @@ def T_Integral(m, S, Kzz_inv,psi, g,Tmin, Tmax):
     var_qf = g * T - tf.trace(tf.matmul(Kzz_inv,psi)) + tf.trace(tf.matmul(tf.matmul(tf.matmul(Kzz_inv,S),Kzz_inv),psi))
     return (e_qf + var_qf)
 
-def G(mu_sqr,sig_sqr_matrix):
-    
-    sig_sqr = tf.diag_part(sig_sqr_matrix)
+def G(mu_sqr,sig_sqr):
+
     lookup_x = - tf.squeeze(mu_sqr) / (2*sig_sqr)
     
     lookup_table = load_lookup_table()
@@ -232,7 +281,14 @@ def G(mu_sqr,sig_sqr_matrix):
     
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
-    return tf.reduce_sum(-G(mu_sqr,sig_sqr)+tf.log(mu_sqr/2)-C,axis=1)
+
+    with tf.name_scope('G_lookup'):
+        G_value = -G(mu_sqr,sig_sqr)
+
+    with tf.name_scope('log_of_mu_sqr'):
+        log_of_mu_sqr = tf.log(mu_sqr/2)
+
+    return tf.reduce_sum( G_value + log_of_mu_sqr - C, axis=0, name='exp_at_datapoints')
 
 
 def tf_tril_indices(N, k=0):
