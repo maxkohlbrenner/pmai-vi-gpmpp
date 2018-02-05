@@ -19,11 +19,11 @@ def get_test_log_likelihood():
     
     C = tf.constant(0.57721566)
     
-    with tf.name_scope('intergration-over-region-T (loglikelike testdata)'):
-        psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_gh,Tmins,Tmaxs)
+    with tf.name_scope('intergration-over-region-T_test_data'):
+        psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_ph,Tmins,Tmaxs)
         integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
 
-    with tf.name_scope('expectation_at_datapoints (loglikelike testdata)'):
+    with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
         exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
@@ -321,12 +321,28 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     # 3. sample locations uniformly
     low  = region_lims[:,0]
     high = region_lims[:,1]
-    sample_candidates = np.random.uniform(low=low, high=high, size=(J, D))
+    sample_candidates_training = np.random.uniform(low=low, high=high, size=(J, D))
+    sample_candidates_test = np.random.uniform(low=low, high=high, size=(J, D))
     
-    vals = rate_function(sample_candidates)
+    res = 40
+    #grid for plot
+    if(region_lims.shape[0]>1):
+        
+
+        xx, yy = np.meshgrid(np.linspace(low[0], high[0], res), np.linspace(low[1], high[1], res))
+        X = np.array([xx, yy]).transpose(1,2,0).reshape(res**2, 2)
+
+        sample_points = np.concatenate((np.concatenate((sample_candidates_training,sample_candidates_test)),X))
+    else:
+        sample_points = np.concatenate((sample_candidates_training,sample_candidates_test))
+        X = []
+    
+    vals = rate_function(sample_points)
     
     # 5. iterate over points and accept/reject
-    R = np.random.uniform(size=J) * upper_bound
-    accept = R < vals # R < logistic(vals) * upper_bound
+    R = np.random.uniform(size=J*2) * upper_bound
+    accept_training = R[:J] < vals[:J] # R < logistic(vals) * upper_bound
+    accept_test = R[J:(J+J)] < vals[J:(J+J)] 
+
     
-    return sample_candidates[accept], R[accept], sample_candidates, R
+    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
