@@ -2,6 +2,99 @@ import tensorflow as tf
 import numpy as np
 import math
 
+na = np.newaxis
+
+def train_parameters(data, ind_point_number, place_points_on_grid = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
+    ## ######## ##
+    # PARAMETERS #
+    ## ######## ##
+
+    # init path if not specified
+    if log_dir == None:
+        log_dir        = 'logs'
+    if run_prefix == None:
+        run_prefix = 'vipp_{}ipres_lr{}_{}iterations'.format(ind_point_number, learning_rate, max_iterations)
+
+    if place_points_on_grid:
+
+        # inducing point location
+        Zx = np.linspace(1, 9, ind_point_number)[:,na]
+        Zy = np.linspace(1, 9, ind_point_number)[:,na]
+
+        xx_ind_points, yy_ind_points = np.meshgrid(Zx, Zy)
+
+        Z = np.array([xx_ind_points, yy_ind_points]).transpose(1,2,0).reshape(ind_point_number**2, 2)
+
+    else:
+        # TODO: implement inducing point optimization
+        print('ERROR: inducing point optimization not yet implemented')
+        return -666
+
+    ## ######### ##
+    # BUILD GRAPH #
+    ## ######### ##
+    tf.reset_default_graph()
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz = build_graph(Z.shape[0],Z.shape[1],alphas_init,gamma_init)
+
+    variables = [m,L_vech]
+    
+    if train_hyperparameters:
+        variables = variables + [alphas, gamma]
+    
+    with tf.name_scope('optimization'):
+        train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(-lower_bound,var_list=variables)
+
+
+    #inspected_op = tf.get_default_graph().get_tensor_by_name("KL-divergence/truediv:0")
+    #interesting_gradient = tf.gradients(lower_bound, [inspected_op])[0]
+
+    with tf.name_scope('nanchecks'):
+        check = tf.add_check_numerics_ops()
+
+    ## ########## ##
+    # OPTIMIZATION #
+    ## ########## ##
+    with tf.Session() as sess:
+
+        sess.run(tf.global_variables_initializer())
+        writer = tf.summary.FileWriter(log_dir + '/' + run_prefix, sess.graph)
+
+        S_init_val = sess.run([S])
+        # print(S_init_val)
+        # print(np.all(np.linalg.eigvals(S_init_val) >= 0))
+
+        for i in range(max_iterations):
+            _, lower_bound_val, m_val, S_val, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict={Z_ph:Z, u_ph:0.,X_ph:data})
+            writer.add_summary(summary, i)
+
+            # print(Kzz_val)
+            # print('------------')
+            #print(lower_bound_val)
+            #print(Kzz_val)
+            #print(g_val)
+            # print(np.min(S_val))
+            # print(np.max(S_val))
+            # print(np.allclose(S_val, S_val.T))
+            # print(np.all(np.linalg.eigvals(S_val) >= 0))
+
+            #print(sess.run([S]))
+            #print(sess.run([L_vech_grad]))
+            
+    
+    return m_val, S_val, Kzz_inv, alphas_vals, Z, gamma_val
+
+
+def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z,eval_grid):
+    #build graph
+    lam, lam_var, Z_ph,X_eval_ph, K_zz_inv_ph, S_ph, m_ph,alphas_ph,gamma_ph  = build_eval_graph()
+
+    #run session
+    with tf.Session() as sess:
+        lam_vals, = sess.run([lam], feed_dict={Z_ph:Z, X_eval_ph:eval_grid, K_zz_inv_ph: Kzz_inv, S_ph:S_val, m_ph:m_val, alphas_ph:alphas_vals, gamma_ph:gamma_val})
+
+    return lam_vals
+
+
 def get_test_log_likelihood():
     X_test_ph = tf.placeholder(tf.float32, [None, None],  name='evaluation_points')
     Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
@@ -20,11 +113,11 @@ def get_test_log_likelihood():
     C = tf.constant(0.57721566)
 
     with tf.name_scope('intergration-over-region-T_test_data'):
-        psi_matrix = psi_term(Z_ph,Z_ph,a_ph,g_ph,Tmins,Tmaxs)
+        psi_matrix = psi_term(Z_ph, Z_ph, alphas_ph, gamma_ph, Tmins, Tmaxs)
         integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
-        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, a_ph,g_ph)
+        mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
         exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
@@ -80,13 +173,20 @@ def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_v
     ## ####### ##
 
     with tf.name_scope('variational_distribution_parameters'):
-        #alphas
-        alphas_init = tf.ones([dim])*alphas_init_val
-        alphas = tf.Variable(alphas_init, name = 'variational_alphas')
-        
-        #gamma
-        gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
-        gamma = tf.abs(gamma_base)
+
+        with tf.name_scope('kernel_hyperparameters'):
+
+            #alphas
+            alphas_init = tf.ones([dim])*alphas_init_val
+            alphas = tf.Variable(alphas_init, name = 'variational_alphas')
+            
+            #gamma
+            gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
+            gamma = tf.abs(gamma_base)
+
+            tf.summary.scalar('gamma_base', gamma_base)
+            tf.summary.tensor_summary('alphas', alphas)
+
         
         # mean
         m_init = tf.ones([num_inducing_points])
