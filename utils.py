@@ -4,7 +4,7 @@ import math
 
 na = np.newaxis
 
-def train_parameters(data, ind_point_number, place_points_on_grid = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
+def train_parameters(data, ind_point_number, Tlims, place_points_on_grid = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -16,14 +16,12 @@ def train_parameters(data, ind_point_number, place_points_on_grid = True, train_
         run_prefix = 'vipp_{}ipres_lr{}_{}iterations'.format(ind_point_number, learning_rate, max_iterations)
 
     if place_points_on_grid:
-
-        # inducing point location
-        Zx = np.linspace(1, 9, ind_point_number)[:,na]
-        Zy = np.linspace(1, 9, ind_point_number)[:,na]
-
-        xx_ind_points, yy_ind_points = np.meshgrid(Zx, Zy)
-
-        Z = np.array([xx_ind_points, yy_ind_points]).transpose(1,2,0).reshape(ind_point_number**2, 2)
+        # Tlims is of shape (D,2),  [[min, max] for each dimension]
+        M = len(Tlims)
+        ranges = [np.linspace(lims[0], lims[1], ind_point_number + 2)[1:-1] for lims in Tlims]
+        grid   = np.array(np.meshgrid(*ranges))
+        
+        Z = np.stack(grid, len(grid)).reshape(ind_point_number ** M, M)
 
     else:
         # TODO: implement inducing point optimization
@@ -84,7 +82,8 @@ def train_parameters(data, ind_point_number, place_points_on_grid = True, train_
     return m_val, S_val, Kzz_inv, alphas_vals, Z, gamma_val
 
 
-def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z,eval_grid):
+def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid):
+
     #build graph
     lam, lam_var, Z_ph,X_eval_ph, K_zz_inv_ph, S_ph, m_ph,alphas_ph,gamma_ph  = build_eval_graph()
 
@@ -93,6 +92,15 @@ def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z,eval_grid):
         lam_vals, = sess.run([lam], feed_dict={Z_ph:Z, X_eval_ph:eval_grid, K_zz_inv_ph: Kzz_inv, S_ph:S_val, m_ph:m_val, alphas_ph:alphas_vals, gamma_ph:gamma_val})
 
     return lam_vals
+
+def build_2d_grid(lims, resolution):
+
+    x = np.linspace(lims[0,0], lims[0,1], resolution)[:,na]
+    y = np.linspace(lims[1,0], lims[1,1], resolution)[:,na]
+    xx, yy = np.meshgrid(x, y)
+    grid = np.array([xx, yy]).transpose(1,2,0).reshape(resolution**2, 2)
+
+    return grid
 
 
 def get_test_log_likelihood():
