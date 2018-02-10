@@ -15,7 +15,16 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     if log_dir == None:
         log_dir        = 'logs'
     if run_prefix == None:
-        run_prefix = 'vipp_{}ipres_lr{}_{}iterations'.format(ind_point_number, learning_rate, max_iterations)
+        if optimize_inducing_points:
+            ip_part = '_ipopt'
+        else:
+            ip_part=''
+        if not train_hyperparameters:
+            hp_part = '_hpfix'
+        else:
+            hp_part = ''
+
+        run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
     
     # dimensionality of the space
     D = data.shape[1]
@@ -56,7 +65,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
         train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(-lower_bound,var_list=variables)
 
 
-    #inspected_op = tf.get_default_graph().get_tensor_by_name("KL-divergence/truediv:0")
+    # inspected_op = tf.get_default_graph().get_tensor_by_name("KL-divergence/truediv:0")
     #interesting_gradient = tf.gradients(lower_bound, [inspected_op])[0]
 
     with tf.name_scope('nanchecks'):
@@ -76,15 +85,19 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
         # print(S_init_val)
 
+
+        feed_dict = {u_ph:0. ,X_ph:data}
+        if not optimize_inducing_points:
+            feed_dict[Z_ph] = Z
+
+        init_state = sess.run([merged, lower_bound, m, S, Kzz], feed_dict=feed_dict)
+        writer.add_summary(init_state[0], 0)
+        print(init_state[1:])
+
         for i in range(max_iterations):
 
-            feed_dict = {u_ph:0. ,X_ph:data}
-
-            if not optimize_inducing_points:
-                feed_dict[Z_ph] = Z
-
             _, lower_bound_val, m_val, S_val, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
-            writer.add_summary(summary, i)
+            writer.add_summary(summary, i+1)
 
             # print(Kzz_val)
             # print('------------')
@@ -103,7 +116,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     return m_val, S_val, Kzz_inv, alphas_vals, Z, gamma_val
 
 
-def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid):
+def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid)
 
     #build graph
     lam, lam_var, Z_ph,X_eval_ph, K_zz_inv_ph, S_ph, m_ph,alphas_ph,gamma_ph  = build_eval_graph()
@@ -240,6 +253,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             
             #gamma
             gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
+            # TODO: choose how to treat gamma base
             gamma = tf.abs(gamma_base)
 
             tf.summary.scalar('gamma_base', gamma_base)
@@ -303,7 +317,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv, alphas, gamma_base,K_zz, omegas
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma_base,K_zz, omegas
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -313,7 +327,7 @@ def ard_kernel(X1, X2, gamma=1., alphas=None):
     with tf.name_scope('ard_kernel'):
         if alphas is None:
             alphas = tf.ones([tf.shape(X1)[1]])
-        return gamma * tf.reduce_prod(tf.exp(- (tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0))**2 / (2 * tf.expand_dims(tf.expand_dims(alphas, 0), 0))), axis=2) 
+        return gamma * tf.reduce_prod(tf.exp(- tf.square(tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0)) / (2 * tf.expand_dims(tf.expand_dims(alphas, 0), 0))), axis=2) 
 
 
 def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
@@ -434,16 +448,18 @@ def psi_term(Z1, Z2, alphas, gamma, Tmins, Tmaxs):
     z_ovln = (tf.expand_dims(Z1,1)+tf.expand_dims(Z2,0))/2
 
     alphas_r = tf.expand_dims(tf.expand_dims(alphas,0),1)
-    pi = tf.constant(math.pi)
+    pi       = tf.constant(math.pi)
 
-    factor = - (tf.sqrt(pi * alphas_r)/2)
+    factor   = - (tf.sqrt(pi * alphas_r)/2)
 
-    exp_part = tf.exp(-tf.pow(tf.expand_dims(Z1,1) - tf.expand_dims(Z2,0),2) / (4 * alphas_r), name='exp_part')
+    with tf.name_scope('exp_part'):
+        exp_part = tf.exp( - tf.square(tf.expand_dims(Z1,1) - tf.expand_dims(Z2,0)) / (4 * alphas_r), name='exp_part')
 
-    erf_part = tf.subtract( tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmaxs,0),1)) / tf.sqrt(alphas_r)), 
-        tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmins,0),1)) / tf.sqrt(alphas_r)), name='erf_part')
+    with tf.name_scope('erf_part'):
+        erf_part = tf.subtract( tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmaxs,0),1)) / tf.sqrt(alphas_r)), 
+            tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmins,0),1)) / tf.sqrt(alphas_r)), name='erf_part')
     
-    psi_matrix =  tf.multiply( (gamma**2), tf.reduce_prod(factor * exp_part * erf_part ,2), name='psi_matrix')
+    psi_matrix =  tf.multiply( tf.square(gamma), tf.reduce_prod(factor * exp_part * erf_part ,2), name='psi_matrix')
 
     return psi_matrix
 
