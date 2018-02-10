@@ -92,11 +92,11 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
         init_state = sess.run([merged, lower_bound, m, S, Kzz], feed_dict=feed_dict)
         writer.add_summary(init_state[0], 0)
-        print(init_state[1:])
+        # print(init_state[1:])
 
         for i in range(max_iterations):
 
-            _, lower_bound_val, m_val, S_val, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
+            _, lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
             writer.add_summary(summary, i+1)
 
             # print(Kzz_val)
@@ -113,10 +113,10 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             #print(sess.run([L_vech_grad]))
             
     
-    return m_val, S_val, Kzz_inv, alphas_vals, Z, gamma_val
+    return m_val, S_val, Kzz_inv, alphas_vals, Z_locs, gamma_val
 
 
-def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid)
+def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid):
 
     #build graph
     lam, lam_var, Z_ph,X_eval_ph, K_zz_inv_ph, S_ph, m_ph,alphas_ph,gamma_ph  = build_eval_graph()
@@ -295,7 +295,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             mu_t, sig_t_sqr = mu_tilde_square(X_ph,Z_ph,S,m,K_zz_inv, alphas, gamma)
 
         with tf.name_scope('squaring_that_mu'):
-            mu_t_square = mu_t ** 2
+            mu_t_square = tf.square(mu_t)
 
         exp_term = exp_at_datapoints(mu_t_square,sig_t_sqr,C)
 
