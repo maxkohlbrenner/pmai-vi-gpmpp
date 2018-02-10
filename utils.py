@@ -4,40 +4,53 @@ import math
 
 na = np.newaxis
 
-def train_parameters(data, ind_point_number, Tlims, place_points_on_grid = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
+
+    print('Begin training')
 
     # init path if not specified
     if log_dir == None:
         log_dir        = 'logs'
     if run_prefix == None:
         run_prefix = 'vipp_{}ipres_lr{}_{}iterations'.format(ind_point_number, learning_rate, max_iterations)
+    
+    # dimensionality of the space
+    D = data.shape[1]
 
-    if place_points_on_grid:
+    if not optimize_inducing_points:
         # Tlims is of shape (D,2),  [[min, max] for each dimension]
-        M = len(Tlims)
         ranges = [np.linspace(lims[0], lims[1], ind_point_number + 2)[1:-1] for lims in Tlims]
         grid   = np.array(np.meshgrid(*ranges))
         
-        Z = np.stack(grid, len(grid)).reshape(ind_point_number ** M, M)
+        Z = np.stack(grid, len(grid)).reshape(ind_point_number ** D, D)
+
+        print('Fixed inducing points on a grid')
+        print('Z.shape: {}'.format(Z.shape))
+
+        num_inducing_points = ind_point_number ** 2
 
     else:
-        # TODO: implement inducing point optimization
-        print('ERROR: inducing point optimization not yet implemented')
-        return -666
+        # optimize inducing point locs, variable is initialized in build_graph
+        Z = None 
+        num_inducing_points = ind_point_number
+
 
     ## ######### ##
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz = build_graph(Z.shape[0],Z.shape[1],alphas_init,gamma_init)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz, omegas = build_graph(Tlims, num_inducing_points, D,alphas_init,gamma_init, optimize_inducing_points)
 
     variables = [m,L_vech]
     
     if train_hyperparameters:
         variables = variables + [alphas, gamma]
+
+    if optimize_inducing_points:
+        variables = variables + [omegas]
     
     with tf.name_scope('optimization'):
         train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(-lower_bound,var_list=variables)
@@ -50,19 +63,27 @@ def train_parameters(data, ind_point_number, Tlims, place_points_on_grid = True,
         check = tf.add_check_numerics_ops()
 
     ## ########## ##
-    # OPTIMIZATION #
+    # OPTIMIZATION #f
     ## ########## ##
     with tf.Session() as sess:
 
         sess.run(tf.global_variables_initializer())
         writer = tf.summary.FileWriter(log_dir + '/' + run_prefix, sess.graph)
 
-        S_init_val = sess.run([S])
+        # S_init_val = sess.run([S])
         # print(S_init_val)
         # print(np.all(np.linalg.eigvals(S_init_val) >= 0))
 
+        # print(S_init_val)
+
         for i in range(max_iterations):
-            _, lower_bound_val, m_val, S_val, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict={Z_ph:Z, u_ph:0.,X_ph:data})
+
+            feed_dict = {u_ph:0. ,X_ph:data}
+
+            if not optimize_inducing_points:
+                feed_dict[Z_ph] = Z
+
+            _, lower_bound_val, m_val, S_val, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
             writer.add_summary(summary, i)
 
             # print(Kzz_val)
@@ -110,11 +131,12 @@ def get_test_log_likelihood():
     K_zz_inv_ph = tf.placeholder(tf.float32, [None, None], name='Kzz_inverse')
     
     S_ph = tf.placeholder(tf.float32, [None, None], name='final_S')
-    m_ph = tf.placeholder(tf.float32, [None],           name='final_mean')
+    m_ph = tf.placeholder(tf.float32, [None],       name='final_mean')
     
     alphas_ph = tf.placeholder(tf.float32, [None],name='final_alphas')
     gamma_ph = tf.placeholder(tf.float32,None,name='final_gamma')
     
+    # TODO: replace by the actual limits
     Tmins = tf.reduce_min(Z_ph, axis=0)
     Tmaxs = tf.reduce_max(Z_ph, axis=0)
     
@@ -154,12 +176,14 @@ def build_eval_graph():
     return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1.):
+def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., optimize_inducing_points=False):
 
     ## ######### ##
     # PLACEHOLDER # 
     ## ######### ##
-    Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
+    if not optimize_inducing_points: # TODO change back to None
+        Z_ph = tf.placeholder(tf.float32, [None, None], name='inducing_point_locations')
+
     u_ph = tf.placeholder(tf.float32, [],           name='inducing_point_mean')
     X_ph = tf.placeholder(tf.float32, [None, None],  name='input_data')
     #a_ph = tf.placeholder(tf.float32, [None] ,name='alphas')
@@ -169,16 +193,42 @@ def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_v
     #g_const = tf.ones([1]) # later we have to define gamma as variable
     C = tf.constant(0.57721566)
 
-    #Tlims
-    Tmins = tf.reduce_min(Z_ph, axis=0)
-    Tmaxs = tf.reduce_max(Z_ph, axis=0)
+    # 
+    Tlims = tf.constant(Tlims, dtype='float')
+    assert(Tlims.shape == (dim,2))
 
-    # TODO: use shape of Z_ph instead? Right now, the number is defined twice (once here, one above in the definition of Z)
-    # num_inducing_points = 11 # tf.shape(Z_ph)[0] 
+    #Tlims
+    Tmins = tf.reduce_min(Tlims, axis=1)
+    Tmaxs = tf.reduce_max(Tlims, axis=1)
+
+    assert(Tmins.dtype == tf.float32)
+    assert(len(Tmins.shape) == 1)
 
     ## ####### ##
     # VARIABLES # 
     ## ####### ##
+
+    if optimize_inducing_points:
+        # optimize inducing point location
+        with tf.name_scope('inducing_point_optimization'):
+            omegas_init = tf.random_uniform([num_inducing_points, dim])
+            omegas      = tf.Variable(omegas_init, dtype='float', name='ind_point_omegas')
+
+            dim_mean    = tf.reduce_mean(Tlims, axis=1)
+            dim_shifter = tf.subtract(Tmins, Tmaxs, name= 'ind_point_ranges') / 2
+
+            dim_mean    = tf.expand_dims(dim_mean,    0)
+            dim_shifter = tf.expand_dims(dim_shifter, 0)
+
+            assert(dim_mean.shape    == (1, dim))
+            assert(dim_shifter.shape == (1, dim))
+
+            Z_ph = tf.subtract(dim_mean, dim_shifter * tf.sin(omegas), name='inducing_point_locations')
+    else:
+        omegas = None
+
+    Tlims = tf.cast(Tlims, dtype='float32')
+
 
     with tf.name_scope('variational_distribution_parameters'):
 
@@ -214,7 +264,7 @@ def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_v
         # L = tf.sparse_add(tf.eye(L_shape[0], num_columns=L_shape[1]), L_st)
         S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
 
-    # kernel calls
+    # kernel call
     K_zz  = ard_kernel(Z_ph, Z_ph, gamma=gamma, alphas=alphas)
     K_zz_inv = tf.matrix_inverse(K_zz)
 
@@ -253,7 +303,7 @@ def build_graph(num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_v
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv, alphas, gamma_base,K_zz
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient,K_zz_inv, alphas, gamma_base,K_zz, omegas
 
 
 def ard_kernel(X1, X2, gamma=1., alphas=None):
@@ -331,7 +381,7 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
 
     with tf.name_scope('log_of_determinant_ratio'):
 
-        posdef_stabilizer = tf.eye(tf.shape(S)[0]) * 0.01
+        posdef_stabilizer = tf.eye(tf.shape(K_zz)[0]) * 0.01
 
         with tf.name_scope('K_zz_logdet'):
             K_zz_logdet = tf.linalg.logdet(K_zz + posdef_stabilizer)
@@ -351,8 +401,6 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     #second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
     # #########################################
 
-    
-
     third  = tf.to_float(tf.shape(m)[0], name='kl_third')
     # fourth = tf.reduce_sum(tf.multiply(tf.reduce_sum(tf.multiply(mean_diff, tf.transpose(K_zz_inv)), axis=1) , mean_diff))
     
@@ -360,38 +408,80 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
     
     return 0.5 * (first  + second - third + fourth)
 
-def psi_term(Z1, Z2,a,g,Tmin,Tmax):
+def psi_term(Z1, Z2, alphas, gamma, Tmins, Tmaxs):
+    '''
+    D: dimensionality of the space
+    M: number inducing points
+
+    input shapes:
+    ------------
+    Z1     : (M, D)
+    Z2     : (M, D)
+    alphas : (D,)
+    gamma  : (,)
+    Tmins  : (D,)
+    Tmaxs  : (D,)
+    '''
+
+    # broadcasting axes: 
+    # 0: Z1 element
+    # 1: Z2 element
+    # 2: Dimension
+
+    assert(Tmins.dtype == tf.float32)
+    assert(Tmaxs.dtype == tf.float32)
 
     z_ovln = (tf.expand_dims(Z1,1)+tf.expand_dims(Z2,0))/2
 
-    a_r = tf.expand_dims(tf.expand_dims(a,0),1)
-    
+    alphas_r = tf.expand_dims(tf.expand_dims(alphas,0),1)
     pi = tf.constant(math.pi)
+
+    factor = - (tf.sqrt(pi * alphas_r)/2)
+
+    exp_part = tf.exp(-tf.pow(tf.expand_dims(Z1,1) - tf.expand_dims(Z2,0),2) / (4 * alphas_r), name='exp_part')
+
+    erf_part = tf.subtract( tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmaxs,0),1)) / tf.sqrt(alphas_r)), 
+        tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmins,0),1)) / tf.sqrt(alphas_r)), name='erf_part')
     
-    return (g**2) * tf.reduce_prod(-(tf.sqrt(pi * a_r)/2
-                   ) * tf.exp(-tf.pow(tf.expand_dims(Z1,1) - tf.expand_dims(Z2,0),2) / (4 * a_r)
-                             ) * (tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmax,0),1))/tf.sqrt(a_r)
-                                     ) - tf.erf((z_ovln-tf.expand_dims(tf.expand_dims(Tmin,0),1))/tf.sqrt(a_r))),2)
+    psi_matrix =  tf.multiply( (gamma**2), tf.reduce_prod(factor * exp_part * erf_part ,2), name='psi_matrix')
 
-def T_Integral(m, S, Kzz_inv,psi, g,Tmin, Tmax):
+    return psi_matrix
 
-    e_qf = tf.matmul(tf.matmul(tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv),psi),Kzz_inv),tf.expand_dims(m,1))
-    T = tf.reduce_prod(Tmax-Tmin)
-    var_qf = g * T - tf.trace(tf.matmul(Kzz_inv,psi)) + tf.trace(tf.matmul(tf.matmul(tf.matmul(Kzz_inv,S),Kzz_inv),psi))
+def T_Integral(m, S, Kzz_inv,psi, gamma,Tmins, Tmaxs):
+    '''
+    D : dimensionality of space
+    M : number of inducing points
+
+    Input dims:
+    m        : (M)
+    S        : (M, M)
+    K_zz_inf : (M, M)
+    psi      : (M, M)
+    gamma    : ()
+    Tmins    : (D)
+    Tmax s   : (D)
+    '''
+
+    e_qf = tf.matmul(tf.matmul(tf.matmul(tf.matmul(tf.expand_dims(m,0),Kzz_inv, name='firstmatdot'),psi),Kzz_inv),tf.expand_dims(m,1))
+    
+    T_measure = tf.reduce_prod(Tmaxs-Tmins)
+    
+    var_qf = gamma * T_measure - tf.trace(tf.matmul(Kzz_inv,psi)) + tf.trace(tf.matmul(tf.matmul(tf.matmul(Kzz_inv,S),Kzz_inv),psi))
+    
     return (e_qf + var_qf)
 
-def G(mu_sqr,sig_sqr):
+def G_lookup(mu_sqr,sig_sqr):
 
     lookup_x = - tf.squeeze(mu_sqr) / (2*sig_sqr)
-    
     lookup_table = load_lookup_table()
+
     return table_lookup_op_parallel(lookup_table, lookup_x)
     
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
 
     with tf.name_scope('G_lookup'):
-        G_value = -G(mu_sqr,sig_sqr)
+        G_value = - G_lookup(mu_sqr,sig_sqr)
 
     with tf.name_scope('log_of_mu_sqr'):
         log_of_mu_sqr = tf.log(mu_sqr/2)
