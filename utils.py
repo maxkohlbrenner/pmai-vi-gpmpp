@@ -161,7 +161,7 @@ def get_test_log_likelihood():
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
-        exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
+        exp_term = exp_at_datapoints(tf.square(mu_t),sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term
@@ -499,10 +499,10 @@ def exp_at_datapoints(mu_sqr,sig_sqr,C):
     with tf.name_scope('G_lookup'):
         G_value = - G_lookup(mu_sqr,sig_sqr)
 
-    with tf.name_scope('log_of_mu_sqr'):
-        log_of_mu_sqr = tf.log(mu_sqr/2)
+    with tf.name_scope('log_of_sig_sqr'):
+        log_of_sig_sqr = tf.log(sig_sqr/2)
 
-    return tf.reduce_sum( G_value + log_of_mu_sqr - C, axis=0, name='exp_at_datapoints')
+    return tf.reduce_sum( G_value + log_of_sig_sqr - C, axis=0, name='exp_at_datapoints')
 
 
 def tf_tril_indices(N, k=0):
