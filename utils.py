@@ -31,7 +31,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
     if not optimize_inducing_points:
         # Tlims is of shape (D,2),  [[min, max] for each dimension]
-        ranges = [np.linspace(lims[0], lims[1], ind_point_number + 2)[1:-1] for lims in Tlims]
+        ranges = [np.linspace(lims[0], lims[1], ind_point_number) for lims in Tlims]
         grid   = np.array(np.meshgrid(*ranges))
         
         Z = np.stack(grid, len(grid)).reshape(ind_point_number ** D, D)
@@ -123,9 +123,9 @@ def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid):
 
     #run session
     with tf.Session() as sess:
-        lam_vals, = sess.run([lam], feed_dict={Z_ph:Z, X_eval_ph:eval_grid, K_zz_inv_ph: Kzz_inv, S_ph:S_val, m_ph:m_val, alphas_ph:alphas_vals, gamma_ph:gamma_val})
+        lam_vals,lam_var_vals = sess.run([lam,lam_var], feed_dict={Z_ph:Z, X_eval_ph:eval_grid, K_zz_inv_ph: Kzz_inv, S_ph:S_val, m_ph:m_val, alphas_ph:alphas_vals, gamma_ph:gamma_val})
 
-    return lam_vals
+    return lam_vals,lam_var_vals
 
 def build_2d_grid(lims, resolution):
 
