@@ -161,7 +161,7 @@ def get_test_log_likelihood():
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
-        exp_term = exp_at_datapoints(mu_t**2,sig_t_sqr,C)
+        exp_term = exp_at_datapoints(tf.sqare(mu_t),sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term
@@ -227,6 +227,20 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             omegas_init = tf.random_uniform([num_inducing_points, dim])
             omegas      = tf.Variable(omegas_init, dtype='float', name='ind_point_omegas')
 
+            with tf.name_scope('omegas'):
+                if dim == 1:
+                    for z in range(num_inducing_points):
+                        tf.summary.scalar('omegas_{}'.format(z), tf.squeeze(omegas[z]))
+
+                elif dim == 2:
+                    print('omega 2d treatment not yet implemented')
+                    # TODO: add fancy 2d movement as images
+                    # for z in range(num_inducing_points):
+                    #    tf.summary.('omegas_{}'.format(z), omegas[z])
+
+                else:
+                    print('omega summaries not available for dimensions higher than 2')
+
             dim_mean    = tf.reduce_mean(Tlims, axis=1)
             dim_shifter = tf.subtract(Tmins, Tmaxs, name= 'ind_point_ranges') / 2
 
@@ -250,6 +264,10 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             #alphas
             alphas_init = tf.ones([dim])*alphas_init_val
             alphas = tf.Variable(alphas_init, name = 'variational_alphas')
+
+            with tf.name_scope('alphas'):
+                for a in range(dim):
+                    tf.summary.scalar('alphas_{}'.format(a), alphas[a])
             
             #gamma
             gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
@@ -365,7 +383,7 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
     # mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv),k_zx, name='mu')
 
     # mu : (N, M)dot(M, M)dot(M) = (N)
-    mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') ) 
+    mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') )
 
     # sig_sqr : (N, N) - (N, M)dot(M,M)dot(M,N)
     XX_cov = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
@@ -495,6 +513,8 @@ def G_lookup(mu_sqr,sig_sqr):
     
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
+
+    tf.summary.scalar('min_of_mean_at_datapoints', tf.minimum(mu_sqr))
 
     with tf.name_scope('G_lookup'):
         G_value = - G_lookup(mu_sqr,sig_sqr)
