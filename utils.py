@@ -39,7 +39,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
         print('Fixed inducing points on a grid')
         print('Z.shape: {}'.format(Z.shape))
 
-        num_inducing_points = ind_point_number ** 2
+        num_inducing_points = ind_point_number ** D
 
     else:
         # optimize inducing point locs, variable is initialized in build_graph
