@@ -627,10 +627,8 @@ def get_scp_samples(rate_function, region_lims, upper_bound, res):
     accept_test = R[J:(J+J)] < vals[J:(J+J)] 
 
     
-<<<<<<< HEAD
     return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, xx,yy, vals[(J+J):]
-=======
-    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
+
 
 def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
                             m_val, S_val, alphas_val, gamma_val, Z_pos,
@@ -684,4 +682,4 @@ def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_nu
     run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
 
     return run_prefix
->>>>>>> cec03f2424118b033a79b6c12bb629b7fceaaf07
+
