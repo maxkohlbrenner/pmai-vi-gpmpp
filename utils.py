@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import math
 
+import matplotlib.pyplot as plt
+
 na = np.newaxis
 
 def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
@@ -15,16 +17,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     if log_dir == None:
         log_dir        = 'logs'
     if run_prefix == None:
-        if optimize_inducing_points:
-            ip_part = '_ipopt'
-        else:
-            ip_part=''
-        if not train_hyperparameters:
-            hp_part = '_hpfix'
-        else:
-            hp_part = ''
-
-        run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
+        run_prefix = get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init)
     
     # dimensionality of the space
     D = data.shape[1]
@@ -161,7 +154,7 @@ def get_test_log_likelihood():
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
-        exp_term = exp_at_datapoints(tf.square(mu_t),sig_t_sqr,C)
+        exp_term = exp_at_datapoints(tf.sqare(mu_t),sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term
@@ -227,6 +220,20 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             omegas_init = tf.random_uniform([num_inducing_points, dim])
             omegas      = tf.Variable(omegas_init, dtype='float', name='ind_point_omegas')
 
+            with tf.name_scope('omegas'):
+                if dim == 1:
+                    for z in range(num_inducing_points):
+                        tf.summary.scalar('omegas_{}'.format(z), tf.squeeze(omegas[z]))
+
+                elif dim == 2:
+                    print('omega 2d treatment not yet implemented')
+                    # TODO: add fancy 2d movement as images
+                    # for z in range(num_inducing_points):
+                    #    tf.summary.('omegas_{}'.format(z), omegas[z])
+
+                else:
+                    print('omega summaries not available for dimensions higher than 2')
+
             dim_mean    = tf.reduce_mean(Tlims, axis=1)
             dim_shifter = tf.subtract(Tmins, Tmaxs, name= 'ind_point_ranges') / 2
 
@@ -250,6 +257,10 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             #alphas
             alphas_init = tf.ones([dim])*alphas_init_val
             alphas = tf.Variable(alphas_init, name = 'variational_alphas')
+
+            with tf.name_scope('alphas'):
+                for a in range(dim):
+                    tf.summary.scalar('alphas_{}'.format(a), alphas[a])
             
             #gamma
             gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma')
@@ -365,7 +376,7 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
     # mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv),k_zx, name='mu')
 
     # mu : (N, M)dot(M, M)dot(M) = (N)
-    mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') ) 
+    mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') )
 
     # sig_sqr : (N, N) - (N, M)dot(M,M)dot(M,N)
     XX_cov = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
@@ -496,6 +507,8 @@ def G_lookup(mu_sqr,sig_sqr):
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
 
+    tf.summary.scalar('min_of_mean_at_datapoints', tf.reduce_min(mu_sqr))
+
     with tf.name_scope('G_lookup'):
         G_value = - G_lookup(mu_sqr,sig_sqr)
 
@@ -614,4 +627,61 @@ def get_scp_samples(rate_function, region_lims, upper_bound, res):
     accept_test = R[J:(J+J)] < vals[J:(J+J)] 
 
     
+<<<<<<< HEAD
     return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, xx,yy, vals[(J+J):]
+=======
+    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
+
+def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
+                            m_val, S_val, alphas_val, gamma_val, Z_pos,
+                            eval_points, lambdas,
+                            log_dir, data_samples
+                            ):
+
+    # command line output
+    print('Numeric results:')
+    print('kernel hyperparameters:')
+    print('-> alphas = {}'.format(alphas_val))
+    print('-> gamma  = {}'.format(gamma_val))
+    
+    # graphical output
+    fig = plt.figure(figsize=(10, 5))
+    plt.ylim([-1, np.max(lambdas) + 1])
+    plt.plot(eval_points,lambdas)
+    plt.plot(data_samples,np.zeros(data_samples.shape[0]),'k|')
+    plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
+    plt.savefig(log_dir + 'lambda_function.png')
+    plt.show()
+    fig.clf()
+    
+    # save results to file
+    np.savez(log_dir + 'configs_and_numerical_results.npz',
+             alphas_init      = alphas_init, 
+             gamma_init       = gamma_init, 
+             ind_point_number = ind_point_number, 
+             learning_rate    = learning_rate, 
+             max_iterations   = max_iterations,
+             Z_pos       = Z_pos, 
+             m_val       = m_val, 
+             S_val       = S_val,
+             alphas_val  = alphas_val,
+             gamma_val   = gamma_val,
+             eval_points = eval_points,
+             lambdas     = lambdas
+            )
+    
+def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init):
+    
+    if optimize_inducing_points:
+            ip_part = '_ipopt'
+    else:
+        ip_part=''
+    if not train_hyperparameters:
+        hp_part = '_hpfix'
+    else:
+        hp_part = ''
+
+    run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
+
+    return run_prefix
+>>>>>>> cec03f2424118b033a79b6c12bb629b7fceaaf07
