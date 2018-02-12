@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import math
 
+import matplotlib.pyplot as plt
+
 na = np.newaxis
 
 def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
@@ -15,16 +17,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     if log_dir == None:
         log_dir        = 'logs'
     if run_prefix == None:
-        if optimize_inducing_points:
-            ip_part = '_ipopt'
-        else:
-            ip_part=''
-        if not train_hyperparameters:
-            hp_part = '_hpfix'
-        else:
-            hp_part = ''
-
-        run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
+        run_prefix = get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init)
     
     # dimensionality of the space
     D = data.shape[1]
@@ -514,15 +507,15 @@ def G_lookup(mu_sqr,sig_sqr):
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
 
-    tf.summary.scalar('min_of_mean_at_datapoints', tf.minimum(mu_sqr))
+    tf.summary.scalar('min_of_mean_at_datapoints', tf.reduce_min(mu_sqr))
 
     with tf.name_scope('G_lookup'):
         G_value = - G_lookup(mu_sqr,sig_sqr)
 
-    with tf.name_scope('log_of_mu_sqr'):
-        log_of_mu_sqr = tf.log(mu_sqr/2)
+    with tf.name_scope('log_of_sig_sqr'):
+        log_of_sig_sqr = tf.log(sig_sqr/2)
 
-    return tf.reduce_sum( G_value + log_of_mu_sqr - C, axis=0, name='exp_at_datapoints')
+    return tf.reduce_sum( G_value + log_of_sig_sqr - C, axis=0, name='exp_at_datapoints')
 
 
 def tf_tril_indices(N, k=0):
@@ -636,3 +629,56 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
 
     
     return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
+
+def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
+                            m_val, S_val, alphas_val, gamma_val, Z_pos,
+                            eval_points, lambdas,
+                            log_dir, data_samples
+                            ):
+
+    # command line output
+    print('Numeric results:')
+    print('kernel hyperparameters:')
+    print('-> alphas = {}'.format(alphas_val))
+    print('-> gamma  = {}'.format(gamma_val))
+    
+    # graphical output
+    fig = plt.figure(figsize=(10, 5))
+    plt.ylim([-1, np.max(lambdas) + 1])
+    plt.plot(eval_points,lambdas)
+    plt.plot(data_samples,np.zeros(data_samples.shape[0]),'k|')
+    plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
+    plt.savefig(log_dir + 'lambda_function.png')
+    plt.show()
+    fig.clf()
+    
+    # save results to file
+    np.savez(log_dir + 'configs_and_numerical_results.npz',
+             alphas_init      = alphas_init, 
+             gamma_init       = gamma_init, 
+             ind_point_number = ind_point_number, 
+             learning_rate    = learning_rate, 
+             max_iterations   = max_iterations,
+             Z_pos       = Z_pos, 
+             m_val       = m_val, 
+             S_val       = S_val,
+             alphas_val  = alphas_val,
+             gamma_val   = gamma_val,
+             eval_points = eval_points,
+             lambdas     = lambdas
+            )
+    
+def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init):
+    
+    if optimize_inducing_points:
+            ip_part = '_ipopt'
+    else:
+        ip_part=''
+    if not train_hyperparameters:
+        hp_part = '_hpfix'
+    else:
+        hp_part = ''
+
+    run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
+
+    return run_prefix
