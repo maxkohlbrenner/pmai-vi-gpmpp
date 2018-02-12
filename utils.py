@@ -577,7 +577,7 @@ def table_lookup_op_parallel(table, keys):
     
     return tf.stop_gradient(gradient) * keys + tf.stop_gradient(interpolated_fun_value - gradient * keys)
 
-def get_scp_samples(rate_function, region_lims, upper_bound):
+def get_scp_samples(rate_function, region_lims, upper_bound, res):
     
     # region lims: np.array of shape (D x 2), D dimension of input space
     D = region_lims.shape[0]
@@ -594,7 +594,6 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     sample_candidates_training = np.random.uniform(low=low, high=high, size=(J, D))
     sample_candidates_test = np.random.uniform(low=low, high=high, size=(J, D))
     
-    res = 40
     #grid for plot
     if(region_lims.shape[0]>1):
         
@@ -615,4 +614,4 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     accept_test = R[J:(J+J)] < vals[J:(J+J)] 
 
     
-    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
+    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, xx,yy, vals[(J+J):]
