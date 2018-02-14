@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 na = np.newaxis
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, stabilizer_value=0.01, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -44,7 +44,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz, omegas, covariance_asserts = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, optimize_inducing_points, assert_correct_covariances=False)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz, omegas, covariance_asserts = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
 
     variables = [m,L_vech]
     
@@ -174,7 +174,7 @@ def build_eval_graph():
     return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_stddev=0.001, optimize_inducing_points=False, assert_correct_covariances=False):
+def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_stddev=0.001, stabilizer_value=0.01, optimize_inducing_points=False, assert_correct_covariances=False):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -315,7 +315,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         exp_term = exp_at_datapoints(mu_t_square,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
-        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L)
+        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L, stabilizer_value)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term - kl_term_op
@@ -416,7 +416,7 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
 
     return mu, sig_sqr
 
-def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
+def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L, stabilizer_value):
     # mean_diff = (u_ovln * tf.ones([tf.shape(Z_ph)[0]]) - m)
     mean_diff = tf.expand_dims(u_ovln * tf.ones([tf.shape(m)[0]]) - m, 1)
     first  = tf.trace(tf.matmul(K_zz_inv, S), name='kl_first')
@@ -438,7 +438,8 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
 
     with tf.name_scope('log_of_determinant_ratio'):
 
-        posdef_stabilizer = tf.eye(tf.shape(K_zz)[0]) * 0.01
+        # posdef_stabilizer = tf.diag(tf.random_normal([tf.shape(K_zz)[0]], stddev=stabilizer_value))
+        posdef_stabilizer = tf.eye(tf.shape(K_zz)[0]) * stabilizer_value
 
         with tf.name_scope('K_zz_logdet'):
             K_zz_logdet = tf.linalg.logdet(K_zz + posdef_stabilizer)
