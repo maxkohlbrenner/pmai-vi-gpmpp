@@ -78,8 +78,8 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
         with tf.control_dependencies(covariance_asserts):
 
-            S_init_val = sess.run([S])
-            print(S_init_val)
+            # S_init_val = sess.run([S])
+            # print(S_init_val)
             # print(np.all(np.linalg.eigvals(S_init_val) >= 0))
 
             # print(S_init_val)
