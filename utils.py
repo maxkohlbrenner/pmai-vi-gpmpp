@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 na = np.newaxis
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, log_dir=None, run_prefix=None):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -44,7 +44,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz, omegas = build_graph(Tlims, num_inducing_points, D,alphas_init,gamma_init, optimize_inducing_points)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma, Kzz, omegas, covariance_asserts = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, optimize_inducing_points, assert_correct_covariances=False)
 
     variables = [m,L_vech]
     
@@ -61,51 +61,43 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     # inspected_op = tf.get_default_graph().get_tensor_by_name("KL-divergence/truediv:0")
     #interesting_gradient = tf.gradients(lower_bound, [inspected_op])[0]
 
-    with tf.name_scope('nanchecks'):
-        check = tf.add_check_numerics_ops()
+    if check_numerics:
+        with tf.name_scope('numerics_check'):
+            check = tf.add_check_numerics_ops()
+
+    else:
+        check = lower_bound # just set it to something so that it doesnt raise an error
 
     ## ########## ##
-    # OPTIMIZATION #f
+    # OPTIMIZATION #
     ## ########## ##
     with tf.Session() as sess:
 
         sess.run(tf.global_variables_initializer())
         writer = tf.summary.FileWriter(log_dir + '/' + run_prefix, sess.graph)
 
-        # S_init_val = sess.run([S])
-        # print(S_init_val)
-        # print(np.all(np.linalg.eigvals(S_init_val) >= 0))
+        with tf.control_dependencies(covariance_asserts):
 
-        # print(S_init_val)
+            S_init_val = sess.run([S])
+            print(S_init_val)
+            # print(np.all(np.linalg.eigvals(S_init_val) >= 0))
+
+            # print(S_init_val)
 
 
-        feed_dict = {u_ph:0. ,X_ph:data}
-        if not optimize_inducing_points:
-            feed_dict[Z_ph] = Z
+            feed_dict = {u_ph:0. ,X_ph:data}
+            if not optimize_inducing_points:
+                feed_dict[Z_ph] = Z
 
-        init_state = sess.run([merged, lower_bound, m, S, Kzz], feed_dict=feed_dict)
-        writer.add_summary(init_state[0], 0)
-        # print(init_state[1:])
+            init_state = sess.run([merged, lower_bound, m, S, Kzz, check], feed_dict=feed_dict)
+            writer.add_summary(init_state[0], 0)
+            # print(init_state[1:])
 
-        for i in range(max_iterations):
+            for i in range(max_iterations):
 
-            _, lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
-            writer.add_summary(summary, i+1)
+                _, lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_vals, gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas, gamma, Kzz], feed_dict=feed_dict)
+                writer.add_summary(summary, i+1)
 
-            # print(Kzz_val)
-            # print('------------')
-            #print(lower_bound_val)
-            #print(Kzz_val)
-            #print(g_val)
-            # print(np.min(S_val))
-            # print(np.max(S_val))
-            # print(np.allclose(S_val, S_val.T))
-            # print(np.all(np.linalg.eigvals(S_val) >= 0))
-
-            #print(sess.run([S]))
-            #print(sess.run([L_vech_grad]))
-            
-    
     return m_val, S_val, Kzz_inv, alphas_vals, Z_locs, gamma_val
 
 
@@ -157,9 +149,9 @@ def get_test_log_likelihood():
         exp_term = exp_at_datapoints(tf.sqare(mu_t),sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
-        lower_bound = -integral_over_T + exp_term
+        lower_bound = - integral_over_T + exp_term
         
-    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph,K_zz_inv_ph,alpha_ph,gamma_ph
+    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph, K_zz_inv_ph, alpha_ph, gamma_ph
     
 
 def build_eval_graph():
@@ -182,7 +174,7 @@ def build_eval_graph():
     return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., optimize_inducing_points=False):
+def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_stddev=0.001, optimize_inducing_points=False, assert_correct_covariances=False):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -272,7 +264,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
         
         # mean
-        m_init = tf.ones([num_inducing_points])
+        m_init = tf.ones([num_inducing_points]) * m_init_val
         m = tf.Variable(m_init, name='variational_mean')
 
         # vectorized version of covariance matrix S (ensure valid covariance matrix)
@@ -280,18 +272,30 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         vech_indices= tf.transpose(tf_tril_indices(num_inducing_points))
         
         # L_vech_init = tf.ones([vech_size]) 
-        L_vech_init = tf.random_normal([vech_size], stddev=0.35)
+        L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev)
 
         L_vech = tf.Variable(L_vech_init)
         L_shape = tf.constant([num_inducing_points, num_inducing_points])
         L_st = tf.SparseTensor(tf.to_int64(vech_indices), L_vech, tf.to_int64(L_shape))
         L = tf.sparse_add(tf.zeros(L_shape), L_st)
         # L = tf.sparse_add(tf.eye(L_shape[0], num_columns=L_shape[1]), L_st)
-        S = tf.matmul(L, tf.transpose(L), name='variational_covariance') 
+        S = tf.matmul(L, tf.transpose(L), name='variational_covariance')
+
+        with tf.name_scope('variational_dist_parameters'):
+            tf.summary.histogram('mean_at_inducing_points',  m)
+            tf.summary.histogram('cov_at_inducing_points',   S)
 
     # kernel call
     K_zz  = ard_kernel(Z_ph, Z_ph, gamma=gamma, alphas=alphas)
     K_zz_inv = tf.matrix_inverse(K_zz)
+
+    with tf.name_scope('positive_definiteness_check'):
+        kzz_eigvals, kzz_eigvecs = tf.linalg.eigh(K_zz)
+        S_eigvals, S_eigvecs     = tf.linalg.eigh(S)
+
+        tf.summary.histogram('kzz', K_zz)
+        tf.summary.histogram('kzz_eigenvalues', kzz_eigvals)
+        tf.summary.histogram('S_eigenvalues',   S_eigvals) 
 
     with tf.name_scope('integration-over-region-T'):
         
@@ -324,22 +328,36 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
     # m_grad = tf.gradients(kl_term_op, [m])[0]  
     # L_vech_grad = tf.gradients(kl_term_op, [L_vech])[0]
 
+    if assert_correct_covariances:
+        # assert positive semidefinite covariance matrices
+        S_symm_assert       = tf.Assert(tf.reduce_all(tf.equal(S, tf.transpose(S))), [S])
+        S_possemidef_assert = tf.Assert(tf.reduce_all(tf.greater_equal(tf.linalg.eigh(S)[0], 0)), [S])
+        covariance_asserts = [S_symm_assert, S_possemidef_assert]
+    else:
+        covariance_asserts=[]
+
     interesting_gradient = tf.gradients(lower_bound, [exp_term])[0]
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma_base,K_zz, omegas
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas, gamma_base, K_zz, omegas, covariance_asserts
 
-
-def ard_kernel(X1, X2, gamma=1., alphas=None):
+def ard_kernel(X1, X2, gamma, alphas):
+    
     # X1:  (n1 x d)
     # X2:  (n2 x d)
     # out: (n1 x n2
     with tf.name_scope('ard_kernel'):
-        if alphas is None:
-            alphas = tf.ones([tf.shape(X1)[1]])
-        return gamma * tf.reduce_prod(tf.exp(- tf.square(tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0)) / (2 * tf.expand_dims(tf.expand_dims(alphas, 0), 0))), axis=2) 
 
+        # pairwise distances per dimension, dim (n1, n2)
+        pairwise_distances_per_dim = tf.square(tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0))
+        tf.summary.histogram('pairwise_dists', pairwise_distances_per_dim)
+
+        weighted_pairwise_distances = tf.reduce_sum(pairwise_distances_per_dim / (tf.expand_dims(tf.expand_dims(alphas, 0), 0)) , axis=2)
+
+        return gamma * tf.exp( - 0.5 *  weighted_pairwise_distances) 
+        # return gamma * tf.exp(tf.reduce_sum(- tf.square(tf.expand_dims(X1, 1) - tf.expand_dims(X2, 0)) / (2 * tf.expand_dims(tf.expand_dims(alphas, 0), 0)), axis=2)) 
+    
 
 def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
     '''
@@ -373,15 +391,29 @@ def mu_tilde_square(X_data, Z, S, m, Kzz_inv, a, g):
         # k_xx : (N, N)
         K_xx = ard_kernel(X_data, X_data, gamma = g, alphas=a)
 
+
+    with tf.name_scope('kernel_matrices_summaries'):
+        tf.summary.histogram('KZZ_inv', Kzz_inv)
+        tf.summary.histogram('KZX', k_zx)
+        tf.summary.histogram('KXX', K_xx)
+
     # mu = tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(m,1)),Kzz_inv),k_zx, name='mu')
 
     # mu : (N, M)dot(M, M)dot(M) = (N)
     mu = tf.squeeze( tf.matmul(tf.matmul(k_xz, Kzz_inv), tf.expand_dims(m, 1), name='mu') )
 
     # sig_sqr : (N, N) - (N, M)dot(M,M)dot(M,N)
-    XX_cov = K_xx - tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx) + tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
 
-    sig_sqr = tf.diag_part(XX_cov, name='sig_sqr')
+    with tf.name_scope('XX_variance'):
+        middle = tf.matmul(tf.matmul(k_xz,Kzz_inv),k_zx)
+        right  = tf.matmul(tf.matmul(tf.matmul(tf.matmul(k_xz,Kzz_inv),S),Kzz_inv),k_zx)
+
+        XX_cov = K_xx - middle + right
+        sig_sqr = tf.diag_part(XX_cov, name='sig_sqr')
+
+    tf.summary.histogram('mean_at_datapoints',     mu)
+    tf.summary.histogram('variance_at_datapoints', sig_sqr)
+
     return mu, sig_sqr
 
 def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L):
@@ -507,8 +539,6 @@ def G_lookup(mu_sqr,sig_sqr):
     
 def exp_at_datapoints(mu_sqr,sig_sqr,C):
 
-    tf.summary.scalar('min_of_mean_at_datapoints', tf.reduce_min(mu_sqr))
-
     with tf.name_scope('G_lookup'):
         G_value = - G_lookup(mu_sqr,sig_sqr)
 
@@ -596,9 +626,16 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     D = region_lims.shape[0]
     
     assert(np.alltrue(region_lims[:,0] <= region_lims[:,1])) # , 'First entries of regional limits need to be smaller or equal to the second entries')
-    
+    assert(region_lims.shape[1] == 2)
+    assert(len(region_lims.shape) == 2)
+
+    print('Input dimension is : {}'.format(D))
+
     # 1. calc measure
     V = np.prod(np.absolute(region_lims[:,0] - region_lims[:,1]), axis=0)
+
+    print('Volume is: {}'.format(V))
+
     # 2. sample from poisson 
     J = np.random.poisson(V * upper_bound)
     # 3. sample locations uniformly
@@ -619,7 +656,7 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     else:
         sample_points = np.concatenate((sample_candidates_training,sample_candidates_test))
         X = []
-    
+
     vals = rate_function(sample_points)
     
     # 5. iterate over points and accept/reject
@@ -628,7 +665,7 @@ def get_scp_samples(rate_function, region_lims, upper_bound):
     accept_test = R[J:(J+J)] < vals[J:(J+J)] 
 
     
-    return sample_candidates_training[accept_training],sample_candidates_test[accept_test], R, X, vals[(J+J):],res
+    return sample_candidates_training[accept_training], sample_candidates_test[accept_test], R, X, vals[(J+J):],res
 
 def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
                             m_val, S_val, alphas_val, gamma_val, Z_pos,
