@@ -669,7 +669,7 @@ def get_scp_samples(rate_function, region_lims, upper_bound, res):
 
 def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
                             m_val, S_val, alphas_val, gamma_val, Z_pos,
-                            eval_points, lambdas,
+                            eval_points, lambdas,lambda_var,
                             log_dir, data_samples
                             ):
 
@@ -679,11 +679,15 @@ def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_ra
     print('-> alphas = {}'.format(alphas_val))
     print('-> gamma  = {}'.format(gamma_val))
     
+    var_pos = lambdas+np.sqrt(lambda_var)
+    var_neg = lambdas-np.sqrt(lambda_var)
+    
     # graphical output
     fig = plt.figure(figsize=(10, 5))
     plt.ylim([-1, np.max(lambdas) + 1])
     plt.plot(eval_points,lambdas)
     plt.plot(data_samples,np.zeros(data_samples.shape[0]),'k|')
+    plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
     plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
     plt.savefig(log_dir + 'lambda_function.png')
     plt.show()
