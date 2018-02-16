@@ -15,7 +15,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -53,7 +53,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, log_alphas, log_gamma, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, log_alphas, log_gamma, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
 
     variables = [m,L_vech]
     
@@ -152,14 +152,37 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
                     print('------------------')
                     print('it {}'.format(i+1))
                     print('------------------')
-                    print('Gamma {}'.format(i, np.exp(gamma_val)))
-                    print('Alphas {}'.format(np.exp(alphas_val)))
+                    print('Gamma {}'.format(i, np.exp(log_gamma_val)))
+                    print('Alphas {}'.format(np.exp(log_alphas_val)))
                     print('S:')
                     print(S_val)       
                     print('Kzz:')
-                    print(Kzz_val)       
+                    print(Kzz_val)
 
-                _, lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, log_alphas_vals, log_gamma_val, Kzz_val = sess.run([train_step, lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, log_alphas, log_gamma, Kzz], feed_dict=feed_dict)
+                # train step:
+                _ = sess.run([train_step], feed_dict=feed_dict)
+
+                if enable_pre_log_debugging:
+
+                    print('train_step_succesful')
+                    # working
+
+                    S_logdet_c_op, S_logdet_L_op = logdet_dbg 
+                    S_val= sess.run([S], feed_dict=feed_dict)
+
+                    print('S valid: {}'.format(np.alltrue(np.isfinite(S_val))))
+                    print('max value: {}'.format(np.max(S_val)))
+                    print(S_val)
+
+                    w, _ = np.linalg.eigh(S_val)
+
+                    print('eigvals of S valid: {}'.format(np.alltrue(np.isfinite(w))))
+                    print('prod of eigvals valid: {}'.format(np.isfinite(np.prod(w))))
+                    print('max eigval: {}'.format(np.max(w)))
+
+                    print('-------------------------------')
+
+                lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, log_alphas_vals, log_gamma_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, log_alphas, log_gamma, Kzz], feed_dict=feed_dict)
                 writer.add_summary(summary, i+1)
 
     final_alphas = np.exp(log_alphas_vals)
@@ -347,7 +370,10 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         vech_indices= tf.transpose(tf_tril_indices(num_inducing_points))
 
         # L_vech_init = tf.ones([vech_size]) 
-        L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev, dtype=DTYPE)
+        # L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev, dtype=DTYPE)
+        lvechinitializer = np.zeros([(num_inducing_points * (num_inducing_points+1)) // 2])
+        lvechinitializer[(np.cumsum(np.arange(num_inducing_points+1)) - 1)[1:]] = 1.
+        L_vech_init = tf.constant(lvechinitializer, dtype=DTYPE)
 
         L_vech = tf.Variable(L_vech_init, dtype=DTYPE)
         L_shape = tf.constant([num_inducing_points, num_inducing_points])
@@ -393,7 +419,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         exp_term = exp_at_datapoints(mu_t_square,sig_t_sqr,C)
 
     with tf.name_scope('KL-divergence'):
-        kl_term_op = kl_term(m, S, K_zz, K_zz_inv, u_ph, L, stabilizer_value)
+        kl_term_op, logdet_dbg  = kl_term(m, S, K_zz, K_zz_inv, u_ph, L, stabilizer_value)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = -integral_over_T + exp_term - kl_term_op
@@ -418,7 +444,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
     merged = tf.summary.merge_all()
     
-    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas_base, gamma_base, K_zz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr
+    return lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas_base, gamma_base, K_zz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg
 
 def ard_kernel(X1, X2, gamma, alphas):
     
@@ -531,6 +557,9 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L, stabilizer_value):
 
         with tf.name_scope('S_logdet'):
             S_logdet =  tf.linalg.logdet(S + posdef_stabilizer)
+
+            alt_logdet_via_L = tf.diag_part(L)# 2 * tf.reduce_sum(tf.log(tf.diag_part(L)))
+
         # S_logdet = 2 * tf.reduce_sum(tf.log(tf.diag_part(L)))
         # posdef_stabilizer = tf.eye(L_shape[0]) * lambda
         second = tf.subtract(K_zz_logdet, S_logdet, name='kl_second')
@@ -554,7 +583,7 @@ def kl_term(m, S, K_zz, K_zz_inv, u_ovln, L, stabilizer_value):
     
     fourth = tf.squeeze(tf.matmul(tf.matmul(tf.transpose(mean_diff), K_zz_inv), mean_diff), name='kl_fourth')
     
-    return 0.5 * (first  + second - third + fourth)
+    return 0.5 * (first  + second - third + fourth), [S_logdet, alt_logdet_via_L]
 
 def psi_term(Z1, Z2, alphas, gamma, Tmins, Tmaxs):
     '''
