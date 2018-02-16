@@ -91,20 +91,22 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             if not optimize_inducing_points:
                 feed_dict[Z_ph] = Z
 
-            # S_gradient = tf.gradients(lower_bound, [S])[0]
+            S_gradient = tf.gradients(lower_bound, [S])[0]
 
             left, middle, right, kzx = sigsqr_lmr
-            S_val, Kzz_val, Kzz_inv_val, log_gamma_val, log_alphas_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, Kzz, K_zz_inv, log_gamma, log_alphas, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
+            S_val, S_grad_val, Kzz_val, Kzz_inv_val, log_gamma_val, log_alphas_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, S_gradient, Kzz, K_zz_inv, log_gamma, log_alphas, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
 
             if enable_initialization_debugging:
 
                 print('------------')
                 print('INIT VALUES:')
                 print('------------')
-                print('Gamma {}'.format(np.exp(gamma_val)))
-                print('Alphas {}'.format(np.exp(alphas_val)))
+                print('Gamma {}'.format(np.exp(log_gamma_val)))
+                print('Alphas {}'.format(np.exp(log_alphas_val)))
                 print('S:')
-                print(S_val)     
+                print(S_val)
+                print('S_grad:')
+                print(S_grad_val)     
                 print('Kzz:')
                 print(Kzz_val)
                 print('Kzz_inv:')
@@ -122,19 +124,19 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
                 print(np.allclose(np.dot(Kzz_val, Kzz_inv_val), np.eye(num_inducing_points), atol=atol))
 
 
-                print('kzx:')
-                print(kzx_val) 
-                print('-------')
-                print('sig_sqr')
-                print(sig_sqr_val)
-                print(sig_sqr_val)
-                print('\n')    
-                print('lval:')
-                print(lval)
-                print('mval:')
-                print(mval)
-                print('rval:')
-                print(rval)
+                #print('kzx:')
+                #print(kzx_val) 
+                #print('-------')
+                #print('sig_sqr')
+                #print(sig_sqr_val)
+                #print(sig_sqr_val)
+                #rint('\n')    
+                #print('lval:')
+                #print(lval)
+                #print('mval:')
+                #print(mval)
+                #print('rval:')
+                #print(rval)
 
                 print('----------')
                 print(np.allclose(np.dot(Kzz_val, Kzz_inv_val), np.eye(Kzz_val.shape[0]), atol=10e-8))
@@ -311,7 +313,8 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         with tf.name_scope('kernel_hyperparameters'):
 
             #alphas
-            alphas_init = tf.ones([dim], dtype=DTYPE) * alphas_init_val
+            alphas_init_val = tf.constant(alphas_init_val, dtype=DTYPE)
+            alphas_init = tf.ones([dim], dtype=DTYPE) * tf.log(alphas_init_val)
             alphas_base  = tf.Variable(alphas_init, name = 'variational_alphas', dtype=DTYPE)
             alphas = tf.exp(alphas_base)
 
@@ -320,7 +323,8 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
                     tf.summary.scalar('alphas_{}'.format(a), alphas[a])
             
             #gamma
-            gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma', dtype=DTYPE)
+            gamma_init_val = tf.constant(gamma_init_val, dtype=DTYPE)
+            gamma_base = tf.Variable(tf.log(gamma_init_val), name = 'variational_gamma', dtype=DTYPE)
             # TODO: choose how to treat gamma base
             # gamma = tf.abs(gamma_base)
             gamma = tf.exp(gamma_base)
