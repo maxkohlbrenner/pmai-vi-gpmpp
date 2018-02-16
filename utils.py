@@ -207,7 +207,7 @@ def get_test_log_likelihood():
 
     with tf.name_scope('intergration-over-region-T_test_data'):
         psi_matrix = psi_term(Z_ph, Z_ph, alphas_ph, gamma_ph, Tmins, Tmaxs)
-        integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,g_ph,Tmins,Tmaxs)
+        integral_over_T = T_Integral(m_ph,S_ph,K_zz_inv_ph,psi_matrix,gamma_ph,Tmins,Tmaxs)
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr, _ = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
@@ -216,7 +216,7 @@ def get_test_log_likelihood():
     with tf.name_scope('calculate_bound'):
         lower_bound = - integral_over_T + exp_term
         
-    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph, K_zz_inv_ph, alpha_ph, gamma_ph
+    return lower_bound, Z_ph, X_test_ph, m_ph, S_ph, K_zz_inv_ph, alphas_ph, gamma_ph
     
 
 def build_eval_graph():
@@ -758,7 +758,7 @@ def get_scp_samples(rate_function, region_lims, upper_bound, res):
 def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_rate, max_iterations,
                             m_val, S_val, alphas_val, gamma_val, Z_pos,
                             eval_points, lambdas,lambda_var,
-                            log_dir, data_samples
+                            log_dir, train_samples,test_samples
                             ):
 
     # command line output
@@ -774,7 +774,8 @@ def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_ra
     fig = plt.figure(figsize=(10, 5))
     plt.ylim([-1, np.max(lambdas) + 1])
     plt.plot(eval_points,lambdas)
-    plt.plot(data_samples,np.zeros(data_samples.shape[0]),'k|')
+    plt.plot(train_samples,np.zeros(train_samples.shape[0]),'k|')
+    plt.plot(test_samples,np.zeros(test_samples.shape[0]),'r|')
     plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
     plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
     plt.savefig(log_dir + 'lambda_function.png')
