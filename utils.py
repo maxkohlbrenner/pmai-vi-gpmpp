@@ -15,7 +15,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, m_init_val=0.1, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -43,17 +43,24 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
         num_inducing_points = ind_point_number ** D
 
-        kzz_init = ard_kernel_bc(Z, Z, gamma_init, np.array(alphas_init))
-        lower    = np.linalg.cholesky(kzz_init + np.eye(num_inducing_points) * stabilizer_value)
-        lvech_initializer = lower[np.tril_indices(num_inducing_points)]
+        if init_S_as_eye:
+            lvech_initializer=None 
+        else:
+
+            kzz_init = ard_kernel_bc(Z, Z, gamma_init, np.array(alphas_init))
+            lower    = np.linalg.cholesky(kzz_init + np.eye(num_inducing_points) * stabilizer_value)
+            lvech_initializer = lower[np.tril_indices(num_inducing_points)]
 
     else:
         # optimize inducing point locs, variable is initialized in build_graph
         Z = None 
         num_inducing_points = ind_point_number
 
-        # TODO: find better treatment for ind point optimization
-        lvech_initializer = (np.ones(num_inducing_points) / num_inducing_points**2)
+        if init_S_as_eye:
+            lvech_initializer=None 
+        else:
+            # TODO: find better treatment for ind point optimization
+            lvech_initializer = (np.ones(num_inducing_points) / num_inducing_points**2)
 
 
     ## ######### ##
@@ -825,7 +832,7 @@ def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_ra
     plt.plot(eval_points,lambdas)
     plt.plot(train_samples,np.zeros(train_samples.shape[0]),'k|')
     plt.plot(test_samples,np.zeros(test_samples.shape[0]),'r|')
-    plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
+    # plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
     plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
     plt.savefig(log_dir + 'lambda_function.png')
     plt.show()
