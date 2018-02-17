@@ -20,7 +20,8 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     # PARAMETERS #
     ## ######## ##
 
-    print('Begin training')
+    print('Begin training with {} inducing points'.format(ind_point_number))
+    print('Inducing Point optimization = {}'.format(optimize_inducing_points))
 
     # init path if not specified
     if log_dir == None:
@@ -37,9 +38,6 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
         grid   = np.array(np.meshgrid(*ranges))
         
         Z = np.stack(grid, len(grid)).reshape(ind_point_number ** D, D)
-
-        print('Fixed inducing points on a grid')
-        print('Z.shape: {}'.format(Z.shape))
 
         num_inducing_points = ind_point_number ** D
 
@@ -214,7 +212,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     final_alphas = poser_fun(alphas_base_val)
     final_gamma  = poser_fun(gamma_base_val)
 
-    return m_val, S_val, Kzz_inv, final_alphas, Z_locs, final_gamma
+    return m_val, S_val, Kzz_inv, final_alphas, Z_locs, final_gamma,lower_bound_val
 
 
 def evaluation(m_val,S_val,Kzz_inv,alphas_vals,gamma_val,Z, eval_grid):
