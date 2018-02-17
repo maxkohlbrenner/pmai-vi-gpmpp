@@ -325,7 +325,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
     if optimize_inducing_points:
         # optimize inducing point location
         with tf.name_scope('inducing_point_optimization'):
-            omegas_init = tf.random_uniform([num_inducing_points, dim])
+            omegas_init = tf.random_uniform([num_inducing_points, dim], dtype=DTYPE)
             omegas      = tf.Variable(omegas_init, dtype=DTYPE, name='ind_point_omegas')
 
             with tf.name_scope('omegas'):
