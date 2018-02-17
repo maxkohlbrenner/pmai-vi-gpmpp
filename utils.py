@@ -15,7 +15,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, lvech_init_stddev= 0.01, m_init_val=0.1, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, m_init_val=0.1, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -43,17 +43,24 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
         num_inducing_points = ind_point_number ** D
 
+        kzz_init = ard_kernel_bc(Z, Z, gamma_init, np.array(alphas_init))
+        lower    = np.linalg.cholesky(kzz_init + np.eye(num_inducing_points) * stabilizer_value)
+        lvech_initializer = lower[np.tril_indices(num_inducing_points)]
+
     else:
         # optimize inducing point locs, variable is initialized in build_graph
         Z = None 
         num_inducing_points = ind_point_number
+
+        # TODO: find better treatment for ind point optimization
+        lvech_initializer = (np.ones(num_inducing_points) / num_inducing_points**2)
 
 
     ## ######### ##
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, log_alphas, log_gamma, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_init_stddev, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, log_alphas, log_gamma, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_initializer, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
 
     variables = [m,L_vech]
     
@@ -264,7 +271,7 @@ def build_eval_graph():
     return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_stddev=0.001, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, optimize_inducing_points=False, assert_correct_covariances=False):
+def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_val=None, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, optimize_inducing_points=False, assert_correct_covariances=False):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -331,30 +338,36 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
     Tlims = tf.cast(Tlims, dtype=DTYPE)
 
+    with tf.name_scope('kernel_hyperparameters'):
+
+        #alphas
+        alphas_init_val = tf.constant(alphas_init_val, dtype=DTYPE)
+        alphas_init = tf.ones([dim], dtype=DTYPE) * tf.log(alphas_init_val)
+        alphas_base  = tf.Variable(alphas_init, name = 'variational_alphas', dtype=DTYPE)
+        alphas = tf.exp(alphas_base)
+
+        with tf.name_scope('alphas'):
+            for a in range(dim):
+                tf.summary.scalar('alphas_{}'.format(a), alphas[a])
+        
+        #gamma
+        gamma_init_val = tf.constant(gamma_init_val, dtype=DTYPE)
+        gamma_base = tf.Variable(tf.log(gamma_init_val), name = 'variational_gamma', dtype=DTYPE)
+        # TODO: choose how to treat gamma base
+        # gamma = tf.abs(gamma_base)
+        gamma = tf.exp(gamma_base)
+
+        tf.summary.scalar('gamma_base', gamma_base)
+        tf.summary.tensor_summary('alphas', alphas)
+
+
+    # kernel call
+    K_zz  = ard_kernel(Z_ph, Z_ph, gamma=gamma, alphas=alphas) + tf.eye(num_inducing_points, dtype=DTYPE) * kzz_stabilizer_value 
+    K_zz_inv = tf.matrix_inverse(K_zz)
+
+
+
     with tf.name_scope('variational_distribution_parameters'):
-
-        with tf.name_scope('kernel_hyperparameters'):
-
-            #alphas
-            alphas_init_val = tf.constant(alphas_init_val, dtype=DTYPE)
-            alphas_init = tf.ones([dim], dtype=DTYPE) * tf.log(alphas_init_val)
-            alphas_base  = tf.Variable(alphas_init, name = 'variational_alphas', dtype=DTYPE)
-            alphas = tf.exp(alphas_base)
-
-            with tf.name_scope('alphas'):
-                for a in range(dim):
-                    tf.summary.scalar('alphas_{}'.format(a), alphas[a])
-            
-            #gamma
-            gamma_init_val = tf.constant(gamma_init_val, dtype=DTYPE)
-            gamma_base = tf.Variable(tf.log(gamma_init_val), name = 'variational_gamma', dtype=DTYPE)
-            # TODO: choose how to treat gamma base
-            # gamma = tf.abs(gamma_base)
-            gamma = tf.exp(gamma_base)
-
-            tf.summary.scalar('gamma_base', gamma_base)
-            tf.summary.tensor_summary('alphas', alphas)
-
 
         # mean
         m_init = tf.ones([num_inducing_points], dtype=DTYPE) * m_init_val
@@ -369,11 +382,19 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         vech_size   = tf.cast( (num_inducing_points * (num_inducing_points+1)) / 2, DTYPE_INT)
         vech_indices= tf.transpose(tf_tril_indices(num_inducing_points))
 
+
+
         # L_vech_init = tf.ones([vech_size]) 
         # L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev, dtype=DTYPE)
-        lvechinitializer = np.zeros([(num_inducing_points * (num_inducing_points+1)) // 2])
-        lvechinitializer[(np.cumsum(np.arange(num_inducing_points+1)) - 1)[1:]] = 1.
-        L_vech_init = tf.constant(lvechinitializer, dtype=DTYPE)
+        
+
+        if lvech_init_val is None:
+            lvechinitializer = np.zeros([(num_inducing_points * (num_inducing_points+1)) // 2])
+            lvechinitializer[(np.cumsum(np.arange(num_inducing_points+1)) - 1)[1:]] = 1.
+            L_vech_init = tf.constant(lvechinitializer, dtype=DTYPE)
+
+        else:
+            L_vech_init = tf.constant(lvech_init_val, dtype=DTYPE)
 
         L_vech = tf.Variable(L_vech_init, dtype=DTYPE)
         L_shape = tf.constant([num_inducing_points, num_inducing_points])
@@ -387,11 +408,6 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         with tf.name_scope('variational_dist_parameters'):
             tf.summary.histogram('mean_at_inducing_points',  m)
             tf.summary.histogram('cov_at_inducing_points',   S)
-
-    # kernel call
-    K_zz  = ard_kernel(Z_ph, Z_ph, gamma=gamma, alphas=alphas) + tf.eye(num_inducing_points, dtype=DTYPE) * kzz_stabilizer_value 
-    K_zz_inv = tf.matrix_inverse(K_zz)
-
 
     with tf.name_scope('positive_definiteness_check'):
         kzz_eigvals, kzz_eigvecs = tf.linalg.eigh(K_zz)
@@ -846,3 +862,13 @@ def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_nu
 
     return run_prefix
 
+def ard_kernel_bc(X1, X2, gamma=1, alphas=None):
+    if len(X1.shape) == 1:
+        X1 = X1[:, None]
+    if len(X2.shape) == 1:
+        X2 = X2[:, None]
+    assert(X1.shape[1] == X2.shape[1])
+    
+    if alphas is None:
+        alphas = np.ones(X1.shape[1])
+    return gamma * np.prod(np.exp(- (X1[:, None, :] - X2[None,:,:])**2 / (2 * alphas[None, None, :])), axis=2)
