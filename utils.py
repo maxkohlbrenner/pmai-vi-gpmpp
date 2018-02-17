@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 import math
 
+import time
+
 import matplotlib.pyplot as plt
 
 na = np.newaxis
@@ -15,7 +17,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1 ,ag_poser = 'exp', m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1 ,ag_poser = 'exp', m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False, write_tensorboard_summary=True):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -106,8 +108,12 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     ## ########## ##
     with tf.Session() as sess:
 
+        strt = time.time()
+
         sess.run(tf.global_variables_initializer())
-        writer = tf.summary.FileWriter(log_dir + '/' + run_prefix, sess.graph)
+
+        if write_tensorboard_summary:
+            writer = tf.summary.FileWriter(log_dir + '/' + run_prefix, sess.graph)
 
         with tf.control_dependencies(covariance_asserts):
 
@@ -115,12 +121,12 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             if not optimize_inducing_points:
                 feed_dict[Z_ph] = Z
 
-            S_gradient = tf.gradients(lower_bound, [S])[0]
-
-            left, middle, right, kzx = sigsqr_lmr
-            S_val, S_grad_val, Kzz_val, Kzz_inv_val, gamma_base_val, alphas_base_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, S_gradient, Kzz, K_zz_inv, gamma_base, alphas_base, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
-
             if enable_initialization_debugging:
+
+                S_gradient = tf.gradients(lower_bound, [S])[0]
+                left, middle, right, kzx = sigsqr_lmr
+                S_val, S_grad_val, Kzz_val, Kzz_inv_val, gamma_base_val, alphas_base_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, S_gradient, Kzz, K_zz_inv, gamma_base, alphas_base, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
+
 
                 print('------------')
                 print('INIT VALUES:')
@@ -165,9 +171,9 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
                 print('----------')
                 print(np.allclose(np.dot(Kzz_val, Kzz_inv_val), np.eye(Kzz_val.shape[0]), atol=10e-8))
 
-            init_state = sess.run([merged, lower_bound, m, S, Kzz, check], feed_dict=feed_dict)
-            writer.add_summary(init_state[0], 0)
-            # print(init_state[1:])
+            if write_tensorboard_summary:
+                init_state = sess.run([merged, lower_bound, m, S, Kzz, check], feed_dict=feed_dict)
+                writer.add_summary(init_state[0], 0)
 
             for i in range(max_iterations):
 
@@ -206,8 +212,14 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
                     print('-------------------------------')
 
-                lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
-                writer.add_summary(summary, i+1)
+                if write_tensorboard_summary:
+                    lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
+                    writer.add_summary(summary, i+1)
+
+        lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
+    stp = time.time()
+
+    print('Finished optimization in {}s'.format(stp-strt))
 
     final_alphas = poser_fun(alphas_base_val)
     final_gamma  = poser_fun(gamma_base_val)
@@ -910,3 +922,12 @@ def ard_kernel_bc(X1, X2, gamma=1, alphas=None):
     if alphas is None:
         alphas = np.ones(X1.shape[1])
     return gamma * np.prod(np.exp(- (X1[:, None, :] - X2[None,:,:])**2 / (2 * alphas[None, None, :])), axis=2)
+
+def get_lower_test_bound(test_samples, m, S, Kzz_inv, a, g, Z):
+    lower_bound, Z_ph, X_test_ph, m_ph, S_ph,K_zz_inv_ph,a_ph,g_ph  = get_test_log_likelihood()
+
+    #run session
+    with tf.Session() as sess:
+        lower_bound_val, = sess.run([lower_bound], feed_dict={Z_ph:Z, X_test_ph:test_samples,K_zz_inv_ph: Kzz_inv,S_ph:S,m_ph:m,a_ph:a,g_ph:g})
+
+    return lower_bound_val
