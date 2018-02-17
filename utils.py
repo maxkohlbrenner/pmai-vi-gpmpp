@@ -15,7 +15,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1, m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1 ,ag_poser = 'exp', m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -62,17 +62,29 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             # TODO: find better treatment for ind point optimization
             lvech_initializer = (np.ones(num_inducing_points) / num_inducing_points**2)
 
+    # to ensure positive gamma and alphas values, the parameters are optimized in a different space
+    # the function to revert this transformation is poser_fun
+    if ag_poser == 'abs':
+        poser_fun = lambda x: np.abs(x)
+    elif ag_poser == 'square':
+        poser_fun = lambda x: np.square(x)
+    elif ag_poser == None:
+        poser_fun = lambda x: x
+    else:
+        # default: exp
+        poser_fun = lambda x: np.exp(x)
+
 
     ## ######### ##
     # BUILD GRAPH #
     ## ######### ##
     tf.reset_default_graph()
-    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, log_alphas, log_gamma, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, m_init_val, lvech_initializer, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
+    lower_bound, merged, Z_ph, u_ph, X_ph, m, S,L_vech, interesting_gradient, K_zz_inv, alphas_base, gamma_base, Kzz, omegas, covariance_asserts, sig_t_sqr, sigsqr_lmr, logdet_dbg = build_graph(Tlims, num_inducing_points, D, alphas_init, gamma_init, ag_poser, m_init_val, lvech_initializer, stabilizer_value, kzz_stabilizer_value, optimize_inducing_points, assert_correct_covariances=False)
 
     variables = [m,L_vech]
     
     if train_hyperparameters:
-        variables = variables + [log_alphas, log_gamma]
+        variables = variables + [alphas_base, gamma_base]
 
     if optimize_inducing_points:
         variables = variables + [omegas]
@@ -108,15 +120,15 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             S_gradient = tf.gradients(lower_bound, [S])[0]
 
             left, middle, right, kzx = sigsqr_lmr
-            S_val, S_grad_val, Kzz_val, Kzz_inv_val, log_gamma_val, log_alphas_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, S_gradient, Kzz, K_zz_inv, log_gamma, log_alphas, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
+            S_val, S_grad_val, Kzz_val, Kzz_inv_val, gamma_base_val, alphas_base_val, sig_sqr_val, lval, mval, rval, kzx_val = sess.run([S, S_gradient, Kzz, K_zz_inv, gamma_base, alphas_base, sig_t_sqr, left, middle, right, kzx], feed_dict=feed_dict)  
 
             if enable_initialization_debugging:
 
                 print('------------')
                 print('INIT VALUES:')
                 print('------------')
-                print('Gamma {}'.format(np.exp(log_gamma_val)))
-                print('Alphas {}'.format(np.exp(log_alphas_val)))
+                print('Gamma  base: {} (poser: {})'.format(gamma_base_val, ag_poser)  )
+                print('Alphas base: {} (poser: {})'.format(alphas_base_val, ag_poser) )
                 print('S:')
                 print(S_val)
                 print('S_grad:')
@@ -162,12 +174,12 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
             for i in range(max_iterations):
 
                 if (i+1) % chk_iters == 0:
-                    S_val, Kzz_val, log_gamma_val, log_alphas_val = sess.run([S, Kzz, log_gamma, log_alphas], feed_dict={Z_ph: Z})  
+                    S_val, Kzz_val, gamma_base_val, alphas_base_val_val = sess.run([S, Kzz, gamma_base, alphas_base], feed_dict={Z_ph: Z})  
                     print('------------------')
                     print('it {}'.format(i+1))
                     print('------------------')
-                    print('Gamma {}'.format(i, np.exp(log_gamma_val)))
-                    print('Alphas {}'.format(np.exp(log_alphas_val)))
+                    print('Gamma  base: {} (poser: {})'.format(gamma_base_val), ag_poser)
+                    print('Alphas base: {} (poser: {})'.format(alphas_base_val), ag_poser)
                     print('S:')
                     print(S_val)       
                     print('Kzz:')
@@ -196,11 +208,11 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
 
                     print('-------------------------------')
 
-                lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, log_alphas_vals, log_gamma_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, log_alphas, log_gamma, Kzz], feed_dict=feed_dict)
+                lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
                 writer.add_summary(summary, i+1)
 
-    final_alphas = np.exp(log_alphas_vals)
-    final_gamma  = np.exp(log_gamma_val)
+    final_alphas = poser_fun(alphas_base_val)
+    final_gamma  = poser_fun(gamma_base_val)
 
     return m_val, S_val, Kzz_inv, final_alphas, Z_locs, final_gamma
 
@@ -250,7 +262,7 @@ def get_test_log_likelihood():
 
     with tf.name_scope('expectation_at_datapoints_test_data'):
         mu_t, sig_t_sqr, _ = mu_tilde_square(X_test_ph,Z_ph,S_ph,m_ph,K_zz_inv_ph, alphas_ph, gamma_ph)
-        exp_term = exp_at_datapoints(tf.sqare(mu_t),sig_t_sqr,C)
+        exp_term = exp_at_datapoints(tf.square(mu_t),sig_t_sqr,C)
 
     with tf.name_scope('calculate_bound'):
         lower_bound = - integral_over_T + exp_term
@@ -278,7 +290,7 @@ def build_eval_graph():
     return lam, lam_var, Z_ph,X_eval_ph,K_zz_inv_ph, S_ph, m_ph, alpha_ph,gamma_ph
 
 
-def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., m_init_val=0.1, lvech_init_val=None, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, optimize_inducing_points=False, assert_correct_covariances=False):
+def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma_init_val=1., ag_poser='exp', m_init_val=0.1, lvech_init_val=None, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, optimize_inducing_points=False, assert_correct_covariances=False):
 
     ## ######### ##
     # PLACEHOLDER # 
@@ -347,11 +359,27 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
     with tf.name_scope('kernel_hyperparameters'):
 
+        # poser fun makes sure the values for alphas and gamas are non-negative
+        if ag_poser == 'abs':
+            tf_poser_fun     = lambda x: tf.abs(x)
+            tf_poser_fun_inv = lambda x: tf.abs(x) 
+        elif ag_poser == 'square':
+            tf_poser_fun     = lambda x: tf.square(x)
+            tf_poser_fun_inv = lambda x: tf.sqrt(x) 
+        elif ag_poser == None:
+            tf_poser_fun     = lambda x: x
+            tf_poser_fun_inv = lambda x: x 
+        else:
+            # default: exp
+            tf_poser_fun     = lambda x: tf.exp(x)
+            tf_poser_fun_inv = lambda x: tf.log(x) 
+
         #alphas
         alphas_init_val = tf.constant(alphas_init_val, dtype=DTYPE)
-        alphas_init = tf.ones([dim], dtype=DTYPE) * tf.log(alphas_init_val)
+        alphas_init = tf.ones([dim], dtype=DTYPE) * tf_poser_fun_inv(alphas_init_val)
         alphas_base  = tf.Variable(alphas_init, name = 'variational_alphas', dtype=DTYPE)
-        alphas = tf.exp(alphas_base)
+
+        alphas = tf_poser_fun(alphas_base)
 
         with tf.name_scope('alphas'):
             for a in range(dim):
@@ -359,12 +387,14 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
         
         #gamma
         gamma_init_val = tf.constant(gamma_init_val, dtype=DTYPE)
-        gamma_base = tf.Variable(tf.log(gamma_init_val), name = 'variational_gamma', dtype=DTYPE)
-        # TODO: choose how to treat gamma base
-        # gamma = tf.abs(gamma_base)
-        gamma = tf.exp(gamma_base)
+        gamma_init_val = tf_poser_fun_inv(gamma_init_val)
+        gamma_base = tf.Variable(gamma_init_val, name = 'variational_gamma', dtype=DTYPE)
+        
+        gamma = tf_poser_fun(gamma_base)
 
         tf.summary.scalar('gamma_base', gamma_base)
+        tf.summary.scalar('gamma', gamma)
+        tf.summary.tensor_summary('alphas_base', alphas_base)
         tf.summary.tensor_summary('alphas', alphas)
 
 
@@ -392,9 +422,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
 
         # L_vech_init = tf.ones([vech_size]) 
-        # L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev, dtype=DTYPE)
-        
-
+        '''
         if lvech_init_val is None:
             lvechinitializer = np.zeros([(num_inducing_points * (num_inducing_points+1)) // 2])
             lvechinitializer[(np.cumsum(np.arange(num_inducing_points+1)) - 1)[1:]] = 1.
@@ -402,6 +430,11 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
 
         else:
             L_vech_init = tf.constant(lvech_init_val, dtype=DTYPE)
+        '''
+
+        lvech_init_stddev=0.01
+        L_vech_init = tf.random_normal([vech_size], stddev=lvech_init_stddev, dtype=DTYPE)
+        
 
         L_vech = tf.Variable(L_vech_init, dtype=DTYPE)
         L_shape = tf.constant([num_inducing_points, num_inducing_points])
@@ -827,12 +860,12 @@ def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_ra
     var_neg = lambdas-np.sqrt(lambda_var)
     
     # graphical output
-    fig = plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(7, 5))
     plt.ylim([-1, np.max(lambdas) + 1])
     plt.plot(eval_points,lambdas)
     plt.plot(train_samples,np.zeros(train_samples.shape[0]),'k|')
     plt.plot(test_samples,np.zeros(test_samples.shape[0]),'r|')
-    # plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
+    plt.fill_between(np.squeeze(eval_points),var_pos,var_neg,color='grey', alpha='0.5')
     plt.plot(Z_pos,np.zeros(Z_pos.shape[0])-.5,'r|')
     plt.savefig(log_dir + 'lambda_function.png')
     plt.show()
