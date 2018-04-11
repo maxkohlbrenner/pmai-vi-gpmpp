@@ -17,7 +17,7 @@ elif DTYPE == tf.float64:
 else:
     print('ERROR: DTYPE must be set to either tf.float32 or tf.float64')
 
-def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, max_iterations = 1000, gamma_init = 0.3, alphas_init = 1 ,ag_poser = 'exp', m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False, write_tensorboard_summary=True):
+def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = True, train_hyperparameters = False, learning_rate=0.0001, optimizer='vanilla', max_iterations = 1000, convergence_threshold = 10e-5, gamma_init = 0.3, alphas_init = 1 ,ag_poser = 'exp', m_init_val=0.1, init_S_as_eye=False, stabilizer_value=0.01, kzz_stabilizer_value=1e-8, log_dir=None, run_prefix=None, check_numerics = False, assert_correct_covariances=False, chk_iters=100, enable_initialization_debugging=False, enable_pre_log_debugging=False, write_tensorboard_summary=True):
     ## ######## ##
     # PARAMETERS #
     ## ######## ##
@@ -29,7 +29,7 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
     if log_dir == None:
         log_dir        = 'logs'
     if run_prefix == None:
-        run_prefix = get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init)
+        run_prefix = get_run_prefix(optimize_inducing_points, train_hyperparameters, optimizer, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init)
     
     # dimensionality of the space
     D = data.shape[1]
@@ -90,7 +90,14 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
         variables = variables + [omegas]
     
     with tf.name_scope('optimization'):
-        train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(-lower_bound,var_list=variables)
+        if optimizer == 'adadelta':
+            train_step = tf.train.AdadeltaOptimizer().minimize(-lower_bound,var_list=variables)
+        elif optimizer == 'adam':
+            train_step = tf.train.AdamOptimizer().minimize(-lower_bound,var_list=variables)
+        elif optimizer == 'momentum':
+            train_step = tf.train.MomentumOptimizer(learning_rate, 0.9).minimize(-lower_bound,var_list=variables)
+        else: # vanilla gradient descent
+            train_step = tf.train.GradientDescentOptimizer(learning_rate).minimize(-lower_bound,var_list=variables)
 
 
     # inspected_op = tf.get_default_graph().get_tensor_by_name("KL-divergence/truediv:0")
@@ -175,22 +182,35 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
                 init_state = sess.run([merged, lower_bound, m, S, Kzz, check], feed_dict=feed_dict)
                 writer.add_summary(init_state[0], 0)
 
+            lb_val = -1e100
+
             for i in range(max_iterations):
 
                 if (i+1) % chk_iters == 0:
-                    S_val, Kzz_val, gamma_base_val, alphas_base_val_val = sess.run([S, Kzz, gamma_base, alphas_base], feed_dict={Z_ph: Z})  
+
+                    strt = time.time()
+
+                    S_val, Kzz_val, gamma_base_val, alphas_base_val = sess.run([S, Kzz, gamma_base, alphas_base], feed_dict={Z_ph: Z})  
                     print('------------------')
                     print('it {}'.format(i+1))
                     print('------------------')
-                    print('Gamma  base: {} (poser: {})'.format(gamma_base_val), ag_poser)
-                    print('Alphas base: {} (poser: {})'.format(alphas_base_val), ag_poser)
+                    print('Gamma  base: {} (poser: {})'.format(gamma_base_val, ag_poser))
+                    print('Alphas base: {} (poser: {})'.format(alphas_base_val, ag_poser))
                     print('S:')
                     print(S_val)       
                     print('Kzz:')
                     print(Kzz_val)
 
+                    stp = time.time()
+                    print('...chk_iters debugging finished in {}s'.format(stp-strt))
+
                 # train step:
-                _ = sess.run([train_step], feed_dict=feed_dict)
+                # strt = time.time()
+
+                last_lb_val = lb_val
+                _, lb_val = sess.run([train_step, lower_bound], feed_dict=feed_dict)
+                # stp = time.time()
+                # print('one training step takes {}s'.format(stp-strt))
 
                 if enable_pre_log_debugging:
 
@@ -215,6 +235,11 @@ def train_parameters(data, ind_point_number, Tlims, optimize_inducing_points = T
                 if write_tensorboard_summary:
                     lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
                     writer.add_summary(summary, i+1)
+                    
+                if np.absolute(lb_val - last_lb_val) < convergence_threshold:
+                    print('optimization converged after {} iterations (threshold {})'.format(i, convergence_threshold))
+                    break
+
 
         lower_bound_val, m_val, S_val, Z_locs, grad_val, summary, Kzz_inv, _, alphas_base_val, gamma_base_val, Kzz_val = sess.run([lower_bound, m, S, Z_ph, interesting_gradient, merged, K_zz_inv, check, alphas_base, gamma_base, Kzz], feed_dict=feed_dict)
     stp = time.time()
@@ -335,7 +360,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
     if optimize_inducing_points:
         # optimize inducing point location
         with tf.name_scope('inducing_point_optimization'):
-            omegas_init = (tf.random_uniform([num_inducing_points, dim], dtype=DTYPE) - 0.5) * tf.constant(2 * np.pi, dtype=DTYPE)
+            omegas_init = (tf.random_uniform([num_inducing_points, dim], dtype=DTYPE) - 0.5) * tf.constant(2, dtype=DTYPE)
             omegas      = tf.Variable(omegas_init, dtype=DTYPE, name='ind_point_omegas')
 
             with tf.name_scope('omegas'):
@@ -361,7 +386,7 @@ def build_graph(Tlims, num_inducing_points = 11,dim = 1,alphas_init_val=1, gamma
             assert(dim_mean.shape    == (1, dim))
             assert(dim_shifter.shape == (1, dim))
 
-            Z_ph = tf.subtract(dim_mean, dim_shifter * tf.sin(omegas), name='inducing_point_locations')
+            Z_ph = tf.subtract(dim_mean, dim_shifter * tf.tanh(omegas), name='inducing_point_locations')
     else:
         omegas = None
 
@@ -897,7 +922,7 @@ def show_and_save_results(alphas_init, gamma_init, ind_point_number, learning_ra
              lambdas     = lambdas
             )
     
-def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, max_iterations, learning_rate, gamma_init, alphas_init):
+def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_number, optimizer, max_iterations, learning_rate, gamma_init, alphas_init):
     
     if optimize_inducing_points:
             ip_part = '_ipopt'
@@ -908,7 +933,7 @@ def get_run_prefix(optimize_inducing_points, train_hyperparameters, ind_point_nu
     else:
         hp_part = ''
 
-    run_prefix = 'vipp{}{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, ind_point_number, learning_rate, max_iterations)
+    run_prefix = 'vipp{}{}_{}_ipn{}_lr{}_{}iterations'.format(ip_part, hp_part, optimizer, ind_point_number, learning_rate, max_iterations)
 
     return run_prefix
 
